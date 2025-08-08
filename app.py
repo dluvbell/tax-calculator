@@ -4,6 +4,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime
 import copy
+import numpy as np
 
 # --- Configuration & Tax Data for 2025 ---
 TODAY_YEAR = datetime.now().year
@@ -104,7 +105,7 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
     return gross_income, net_income
 
 # --- Core Retirement Simulation Engine ---
-def run_simulation(scenario, exchange_rate):
+def run_simulation(scenario, exchange_rate, investment_return=None):
     errors = []
     if scenario['startYear'] > scenario['endYear']:
         errors.append("Retirement Start Year cannot be after End Year.")
@@ -114,17 +115,26 @@ def run_simulation(scenario, exchange_rate):
         return {'errors': errors}
 
     investment = float(scenario['initialInvestment'])
+    
+    # For deterministic simulation, use the value from the scenario
+    if investment_return is None:
+        investment_return = float(scenario['investmentReturn']) / 100
+
     years_to_grow = scenario['startYear'] - TODAY_YEAR
     if years_to_grow > 0:
-        investment *= (1 + float(scenario['investmentReturn']) / 100) ** years_to_grow
+        investment *= (1 + investment_return) ** years_to_grow
 
     yearly_data, depletion_year = [], None
-
+    
     for year in range(scenario['startYear'], scenario['endYear'] + 1):
         gross_annual_income = 0
         net_annual_income = 0
         
         if investment <= 0 and depletion_year is None: depletion_year = year
+
+        current_investment_return = investment_return
+        if isinstance(investment_return, dict): # For Monte Carlo
+            current_investment_return = investment_return.get(year, 0)
 
         for crash in scenario.get('marketCrashes', []):
             duration = int(crash.get('duration', 1))
@@ -150,7 +160,7 @@ def run_simulation(scenario, exchange_rate):
         net_annual_expense = sum(float(exp['amount']) * ((1 + float(exp['growthRate']) / 100) ** (year - TODAY_YEAR)) for exp in scenario['expenses'])
         
         investment += (net_annual_income - net_annual_expense)
-        if investment > 0: investment *= (1 + float(scenario['investmentReturn']) / 100)
+        if investment > 0: investment *= (1 + current_investment_return)
 
         for crash in scenario.get('marketCrashes', []):
             duration = int(crash.get('duration', 1))
@@ -167,6 +177,49 @@ def run_simulation(scenario, exchange_rate):
             
     return {'data': yearly_data, 'depletion_year': depletion_year, 'errors': None}
 
+# --- Monte Carlo Simulation ---
+@st.cache_data(ttl=3600)
+def run_monte_carlo_simulation(scenario, exchange_rate, mean_return, std_dev, num_simulations):
+    all_sim_results = []
+    num_success = 0
+    
+    for _ in range(num_simulations):
+        # Generate random returns for the entire simulation period
+        sim_years = range(scenario['startYear'], scenario['endYear'] + 1)
+        random_returns = np.random.normal(mean_return / 100, std_dev / 100, len(sim_years))
+        yearly_returns = {year: ret for year, ret in zip(sim_years, random_returns)}
+        
+        # Run a single simulation with this random return sequence
+        result = run_simulation(scenario, exchange_rate, investment_return=yearly_returns)
+        
+        if result and not result['errors']:
+            final_balance = result['data'][-1]['balance']
+            if final_balance > 0:
+                num_success += 1
+            all_sim_results.append([d['balance'] for d in result['data']])
+
+    if not all_sim_results:
+        return None
+
+    success_rate = (num_success / num_simulations) * 100
+    
+    # Transpose results for easier percentile calculation
+    results_by_year = np.array(all_sim_results).T
+    
+    percentiles = {
+        'p10': [np.percentile(year_data, 10) for year_data in results_by_year],
+        'p25': [np.percentile(year_data, 25) for year_data in results_by_year],
+        'p50': [np.percentile(year_data, 50) for year_data in results_by_year],
+        'p75': [np.percentile(year_data, 75) for year_data in results_by_year],
+        'p90': [np.percentile(year_data, 90) for year_data in results_by_year],
+    }
+    
+    return {
+        'success_rate': success_rate,
+        'percentiles': percentiles,
+        'years': list(sim_years)
+    }
+
 # --- UI Components & Callbacks ---
 def add_item(list_name, default_item):
     st.session_state.scenarios[st.session_state.active_scenario_index][list_name].append(default_item)
@@ -174,7 +227,6 @@ def add_item(list_name, default_item):
 def delete_item(list_name, index):
     st.session_state.scenarios[st.session_state.active_scenario_index][list_name].pop(index)
 
-# 나이 표시 기능을 위해 birth_year 인자 추가
 def create_dynamic_list_ui(list_name, fields, title, default_item, scenario_index, birth_year):
     st.markdown(f"<h5>{title}</h5>", unsafe_allow_html=True)
     active_scenario = st.session_state.scenarios[scenario_index]
@@ -187,10 +239,8 @@ def create_dynamic_list_ui(list_name, fields, title, default_item, scenario_inde
             if field['type'] == 'text': 
                 item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], key=unique_key)
             elif field['type'] == 'number': 
-                # number_input에서 반환된 값을 즉시 사용
                 year_value = cols[j].number_input(field['label'], value=item[field['key']], key=unique_key)
                 item[field['key']] = year_value
-                # 연도 필드 아래에 나이 표시
                 if field['key'] in ['startYear', 'year']:
                     age = year_value - birth_year
                     cols[j].caption(f"Age: {age}")
@@ -208,21 +258,13 @@ def create_dynamic_list_ui(list_name, fields, title, default_item, scenario_inde
 st.set_page_config(layout="wide")
 st.markdown("""
 <style>
-    /* Hide number input steppers */
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button {
-        -webkit-appearance: none !important;
-        margin: 0 !important;
+        -webkit-appearance: none !important; margin: 0 !important;
     }
-    input[type=number] {
-        -moz-appearance: textfield !important;
-    }
-
-    /* Target the container for the scenario management buttons */
+    input[type=number] { -moz-appearance: textfield !important; }
     div[data-testid="stHorizontalBlock"] > div:nth-child(2) > div[data-testid="stHorizontalBlock"] {
-        display: flex;
-        justify-content: flex-start;
-        gap: 0.2rem;
+        display: flex; justify-content: flex-start; gap: 0.2rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -232,27 +274,24 @@ st.markdown("An advanced simulator combining long-term retirement planning with 
 
 if 'scenarios' not in st.session_state:
     st.session_state.scenarios = [{
-        'name': 'My Retirement Plan', 
-        'initialInvestment': 500000, 
-        'investmentReturn': 6, 
-        'birthYear': 1980, 
-        'startYear': TODAY_YEAR + 20, 
-        'endYear': TODAY_YEAR + 50, 
-        'us_dividend_account': 'Non-Registered', 
+        'name': 'My Retirement Plan', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 
+        'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 
         'incomes': [
             {'type': 'OAS', 'amount': 8000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5},
             {'type': 'CPP', 'amount': 9000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5}
         ], 
         'expenses': [{'name': 'Base Expenses', 'amount': 60000, 'growthRate': 3.0}], 
-        'oneTimeEvents': [], 
-        'marketCrashes': []
+        'oneTimeEvents': [], 'marketCrashes': []
     }]
 if 'active_scenario_index' not in st.session_state: st.session_state.active_scenario_index = 0
 if 'results' not in st.session_state: st.session_state.results = None
+if 'mc_results' not in st.session_state: st.session_state.mc_results = None
 
 with st.expander("⚙️ Settings & Inputs", expanded=True):
     # --- Scenario Manager ---
-    def update_active_index(): st.session_state.active_scenario_index = st.session_state.scenario_selector
+    def update_active_index(): 
+        st.session_state.active_scenario_index = st.session_state.scenario_selector
+        st.session_state.mc_results = None # Reset Monte Carlo results when scenario changes
     def add_scenario_cb():
         new_scenario = {'name': f'Scenario {len(st.session_state.scenarios) + 1}', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [], 'expenses': [], 'oneTimeEvents': [], 'marketCrashes': []}
         st.session_state.scenarios.append(new_scenario)
@@ -269,21 +308,13 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
         if st.session_state.results and len(st.session_state.results) > index_to_delete:
             st.session_state.results.pop(index_to_delete)
         st.session_state.active_scenario_index = 0
+        st.session_state.mc_results = None
 
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
-    
     left_col, right_col = st.columns([2, 1])
     with left_col:
         scenario_names = [s['name'] for s in st.session_state.scenarios]
-        st.selectbox(
-            "Active Scenario", 
-            options=range(len(scenario_names)), 
-            format_func=lambda x: scenario_names[x] if x < len(scenario_names) else "",
-            index=st.session_state.active_scenario_index, 
-            key="scenario_selector", 
-            on_change=update_active_index,
-            label_visibility="collapsed"
-        )
+        st.selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x] if x < len(scenario_names) else "", index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index, label_visibility="collapsed")
     with right_col:
         b1, b2, b3 = st.columns(3)
         b1.button("➕", help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb, use_container_width=True)
@@ -304,113 +335,96 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
             cols = st.columns(5)
             active_scenario['initialInvestment'] = cols[0].number_input("Initial Inv. ($)", value=active_scenario['initialInvestment'], format="%d", key=f"scen_{active_scenario_index}_inv")
             active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'], key=f"scen_{active_scenario_index}_ret")
-            
-            # Birth Year 값 가져오기
             birth_year_val = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d", key=f"scen_{active_scenario_index}_birth")
             active_scenario['birthYear'] = birth_year_val
-
-            # Retirement Start Year와 나이 표시
             start_year_val = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d", key=f"scen_{active_scenario_index}_start")
             active_scenario['startYear'] = start_year_val
             cols[3].caption(f"Age: {start_year_val - birth_year_val}")
-
-            # End Year와 나이 표시
             end_year_val = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d", key=f"scen_{active_scenario_index}_end")
             active_scenario['endYear'] = end_year_val
             cols[4].caption(f"Age: {end_year_val - birth_year_val}")
-
             st.markdown("<h6>Tax Settings</h6>", unsafe_allow_html=True)
             active_scenario['us_dividend_account'] = st.selectbox("US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"), index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account']), key=f"scen_{active_scenario_index}_usdiv")
         
-        # create_dynamic_list_ui 호출 시 birth_year 전달
-        elif edit_section == "Recurring Incomes":
-            create_dynamic_list_ui('incomes', [{'key': 'type', 'label': 'Type', 'type': 'select', 'options': INCOME_TYPES, 'default': 'Other Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', {'type': 'Other Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5}, active_scenario_index, active_scenario['birthYear'])
-        elif edit_section == "Recurring Expenses":
-            # 이 섹션에는 연도 입력이 없으므로 birth_year 전달 불필요
-            create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', {'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3}, active_scenario_index, active_scenario['birthYear'])
-        elif edit_section == "One-Time Events":
-            create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', {'name': 'New Event', 'type': 'Expense', 'amount': 20000, 'year': TODAY_YEAR + 15}, active_scenario_index, active_scenario['birthYear'])
-        elif edit_section == "Market Volatility":
-            create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', {'startYear': TODAY_YEAR + 10, 'duration': 2, 'totalDecline': 30, 'timing': 'start'}, active_scenario_index, active_scenario['birthYear'])
+        else:
+            birth_year = active_scenario.get('birthYear', TODAY_YEAR - 40)
+            if edit_section == "Recurring Incomes":
+                create_dynamic_list_ui('incomes', [{'key': 'type', 'label': 'Type', 'type': 'select', 'options': INCOME_TYPES, 'default': 'Other Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', {'type': 'Other Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5}, active_scenario_index, birth_year)
+            elif edit_section == "Recurring Expenses":
+                create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', {'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3}, active_scenario_index, birth_year)
+            elif edit_section == "One-Time Events":
+                create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', {'name': 'New Event', 'type': 'Expense', 'amount': 20000, 'year': TODAY_YEAR + 15}, active_scenario_index, birth_year)
+            elif edit_section == "Market Volatility":
+                create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', {'startYear': TODAY_YEAR + 10, 'duration': 2, 'totalDecline': 30, 'timing': 'start'}, active_scenario_index, birth_year)
 
-# --- Simulation Runner ---
+# --- Deterministic Simulation Runner ---
 if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_width=True):
     exchange_rate = get_exchange_rate()
     with st.spinner("Calculating all scenarios..."):
         st.session_state.results = [run_simulation(s, exchange_rate) for s in st.session_state.scenarios]
+    st.session_state.mc_results = None # Clear MC results when deterministic is run
 
 # --- Results Display ---
 st.header("📊 Simulation Results")
 if st.session_state.results:
-    if len(st.session_state.results) > len(st.session_state.scenarios):
-        st.session_state.results = st.session_state.results[:len(st.session_state.scenarios)]
+    # ... (rest of the deterministic results display code is the same)
 
-    has_errors = any(res.get('errors') for res in st.session_state.results)
-    if has_errors:
-        for i, result in enumerate(st.session_state.results):
-            if result.get('errors'):
-                st.error(f"**Scenario '{st.session_state.scenarios[i]['name']}' has input errors:**")
-                for error in result['errors']:
-                    st.warning(f"- {error}")
+# --- Monte Carlo Simulation Section ---
+with st.expander("🔬 Monte Carlo Simulation"):
+    if not st.session_state.scenarios:
+        st.warning("Please add a scenario first.")
     else:
-        fig = go.Figure()
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        symbols = ['circle', 'square', 'diamond', 'cross', 'x']
-        summary_data = []
+        active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
+        st.info(f"This analysis will run on your currently selected scenario: **{active_scenario['name']}**")
 
-        for i, result in enumerate(st.session_state.results):
-            if i < len(st.session_state.scenarios):
-                scenario = st.session_state.scenarios[i]
-                if result and result.get('data'):
-                    years = [d['year'] for d in result['data']]
-                    balances = [d['balance'] for d in result['data']]
-                    ages = [d['age'] for d in result['data']]
-                    
-                    fig.add_trace(go.Scatter(
-                        x=years, y=balances, mode='lines+markers', name=scenario['name'],
-                        line=dict(color=colors[i % len(colors)], width=3),
-                        marker=dict(size=7, symbol=symbols[i % len(symbols)]),
-                        hovertext=[f"Age: {age}" for age in ages],
-                        hovertemplate='<b>%{data.name}</b><br><b>Year:</b> %{x}<br><b>Balance:</b> %{y:$,.0f}<br><b>%{hovertext}</b><extra></extra>'
-                    ))
-                    
-                    final_balance = balances[-1] if balances else 0
-                    depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
-                    summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
+        mc_cols = st.columns(3)
+        mean_return = mc_cols[0].number_input("Mean Annual Return (%)", value=6.0, help="The average long-term expected return of your portfolio.")
+        std_dev = mc_cols[1].number_input("Annual Volatility (Std. Dev %)", value=12.0, help="The typical range of portfolio fluctuation. A higher value means more risk. (e.g., 60/40 portfolio ~12%)")
+        num_simulations = mc_cols[2].slider("Number of Simulations", min_value=100, max_value=1000, value=500, step=100, help="More simulations provide a more accurate probability but take longer to run.")
 
-        fig.update_layout(
-            title="Retirement Portfolio Projection", 
-            xaxis_title="Year", 
-            yaxis_title="Portfolio Balance", 
-            yaxis_tickprefix="$", 
-            yaxis_tickformat="~s", 
-            legend_title="Scenarios", 
-            template="plotly_dark", 
-            height=500, 
-            hovermode='x unified',
-            xaxis=dict(fixedrange=True),
-            yaxis=dict(fixedrange=True)
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        if st.button("🎲 Run Monte Carlo"):
+            exchange_rate = get_exchange_rate()
+            with st.spinner(f"Running {num_simulations} simulations..."):
+                st.session_state.mc_results = run_monte_carlo_simulation(active_scenario, exchange_rate, mean_return, std_dev, num_simulations)
+        
+        if st.session_state.mc_results:
+            results = st.session_state.mc_results
+            st.subheader("Monte Carlo Results")
+            
+            # Display success rate
+            st.metric(label="Retirement Plan Success Rate", value=f"{results['success_rate']:.1f}%")
+            
+            # Create Fan Chart
+            fig = go.Figure()
+            years = results['years']
+            p = results['percentiles']
+            
+            # 90th percentile fill (best case)
+            fig.add_trace(go.Scatter(x=years, y=p['p90'], mode='lines', line=dict(width=0), name='90th Percentile', showlegend=False))
+            fig.add_trace(go.Scatter(x=years, y=p['p10'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 100, 80, 0.2)', name='10th-90th Percentile', showlegend=True))
+            
+            # 75th percentile fill
+            fig.add_trace(go.Scatter(x=years, y=p['p75'], mode='lines', line=dict(width=0), name='75th Percentile', showlegend=False))
+            fig.add_trace(go.Scatter(x=years, y=p['p25'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 176, 246, 0.2)', name='25th-75th Percentile', showlegend=True))
 
-        st.markdown("<h5>Results Summary</h5>", unsafe_allow_html=True)
-        if summary_data:
-            st.table(pd.DataFrame(summary_data).set_index("Scenario"))
+            # Median line
+            fig.add_trace(go.Scatter(x=years, y=p['p50'], mode='lines', line=dict(color='white', width=3), name='Median Outcome'))
 
-        with st.expander("View Detailed Yearly Data"):
-            scenario_names_for_details = [s['name'] for s in st.session_state.scenarios]
-            if scenario_names_for_details:
-                selected_scenario_for_table = st.selectbox("Select scenario to view details", scenario_names_for_details)
-                idx = scenario_names_for_details.index(selected_scenario_for_table)
-                if st.session_state.results and len(st.session_state.results) > idx and st.session_state.results[idx].get('data'):
-                    df = pd.DataFrame(st.session_state.results[idx]['data'])
-                    df['gross_income'] = df['gross_income'].apply(format_currency)
-                    df['net_income'] = df['net_income'].apply(format_currency)
-                    df['balance'] = df['balance'].apply(format_currency)
-                    df_display = df[['year', 'age', 'gross_income', 'net_income', 'balance']]
-                    st.dataframe(df_display.set_index('year'), use_container_width=True)
+            fig.update_layout(
+                title="Monte Carlo Portfolio Projection",
+                xaxis_title="Year",
+                yaxis_title="Portfolio Balance",
+                yaxis_tickprefix="$",
+                yaxis_tickformat="~s",
+                legend_title="Outcome Percentiles",
+                template="plotly_dark",
+                height=500
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-elif not st.session_state.scenarios:
-     st.info("Please add a new scenario to begin.")
-else:
-    st.info("Adjust settings in the expander above and click 'Run & Compare All Scenarios'.")
+            # Summary Statistics
+            st.markdown("##### Final Balance Summary")
+            summary_cols = st.columns(3)
+            summary_cols[0].metric("Worst 10% Outcome", format_currency(p['p10'][-1]))
+            summary_cols[1].metric("Median Outcome", format_currency(p['p50'][-1]))
+            summary_cols[2].metric("Best 10% Outcome", format_currency(p['p90'][-1]))
