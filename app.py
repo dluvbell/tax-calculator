@@ -116,13 +116,11 @@ def run_simulation(scenario, exchange_rate, investment_return=None):
 
     investment = float(scenario['initialInvestment'])
     
-    # For deterministic simulation, use the value from the scenario
     if investment_return is None:
         investment_return = float(scenario['investmentReturn']) / 100
 
     years_to_grow = scenario['startYear'] - TODAY_YEAR
     if years_to_grow > 0:
-        # For Monte Carlo, apply random returns only during retirement years
         if isinstance(investment_return, dict):
             pre_retirement_return = np.mean(list(investment_return.values()))
             investment *= (1 + pre_retirement_return) ** years_to_grow
@@ -138,7 +136,7 @@ def run_simulation(scenario, exchange_rate, investment_return=None):
         if investment <= 0 and depletion_year is None: depletion_year = year
 
         current_investment_return = investment_return
-        if isinstance(investment_return, dict): # For Monte Carlo
+        if isinstance(investment_return, dict):
             current_investment_return = investment_return.get(year, 0)
 
         for crash in scenario.get('marketCrashes', []):
@@ -270,7 +268,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 Integrated Retirement & Tax Planner")
+# Title changed and resized
+st.header("Retirement Planner")
 st.markdown("An advanced simulator combining long-term retirement planning with detailed annual tax calculations.")
 
 if 'scenarios' not in st.session_state:
@@ -287,12 +286,14 @@ if 'scenarios' not in st.session_state:
 if 'active_scenario_index' not in st.session_state: st.session_state.active_scenario_index = 0
 if 'results' not in st.session_state: st.session_state.results = None
 if 'mc_results' not in st.session_state: st.session_state.mc_results = None
+if 'mc_expander_state' not in st.session_state: st.session_state.mc_expander_state = False
 
 with st.expander("⚙️ Settings & Inputs", expanded=True):
     # --- Scenario Manager ---
     def update_active_index(): 
         st.session_state.active_scenario_index = st.session_state.scenario_selector
         st.session_state.mc_results = None 
+        st.session_state.mc_expander_state = False
     def add_scenario_cb():
         new_scenario = {'name': f'Scenario {len(st.session_state.scenarios) + 1}', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [], 'expenses': [], 'oneTimeEvents': [], 'marketCrashes': []}
         st.session_state.scenarios.append(new_scenario)
@@ -310,6 +311,7 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
             st.session_state.results.pop(index_to_delete)
         st.session_state.active_scenario_index = 0
         st.session_state.mc_results = None
+        st.session_state.mc_expander_state = False
 
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
     left_col, right_col = st.columns([2, 1])
@@ -360,13 +362,15 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
 
 # --- Deterministic Simulation Runner ---
 if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_width=True):
+    st.session_state.mc_expander_state = False
     exchange_rate = get_exchange_rate()
     with st.spinner("Calculating all scenarios..."):
         st.session_state.results = [run_simulation(s, exchange_rate) for s in st.session_state.scenarios]
     st.session_state.mc_results = None 
 
 # --- Results Display ---
-st.header("📊 Simulation Results")
+# Title resized
+st.subheader("📊 Simulation Results")
 if st.session_state.results:
     if len(st.session_state.results) > len(st.session_state.scenarios):
         st.session_state.results = st.session_state.results[:len(st.session_state.scenarios)]
@@ -424,7 +428,10 @@ else:
     st.info("Adjust settings in the expander above and click 'Run & Compare All Scenarios'.")
 
 # --- Monte Carlo Simulation Section ---
-with st.expander("🔬 Monte Carlo Simulation"):
+def set_mc_expander_true():
+    st.session_state.mc_expander_state = True
+
+with st.expander("🔬 Monte Carlo Simulation", expanded=st.session_state.mc_expander_state):
     if not st.session_state.scenarios:
         st.warning("Please add a scenario first.")
     else:
@@ -436,7 +443,7 @@ with st.expander("🔬 Monte Carlo Simulation"):
         std_dev = mc_cols[1].number_input("Annual Volatility (Std. Dev %)", value=12.0, help="The typical range of portfolio fluctuation. A higher value means more risk. (e.g., 60/40 portfolio ~12%)")
         num_simulations = mc_cols[2].slider("Number of Simulations", min_value=100, max_value=1000, value=500, step=100, help="More simulations provide a more accurate probability but take longer to run.")
 
-        if st.button("🎲 Run Monte Carlo"):
+        if st.button("🎲 Run Monte Carlo", on_click=set_mc_expander_true):
             exchange_rate = get_exchange_rate()
             with st.spinner(f"Running {num_simulations} simulations..."):
                 st.session_state.mc_results = run_monte_carlo_simulation(active_scenario, exchange_rate, mean_return, std_dev, num_simulations)
