@@ -168,28 +168,38 @@ def run_simulation(scenario, exchange_rate):
     return {'data': yearly_data, 'depletion_year': depletion_year, 'errors': None}
 
 # --- UI Components & Callbacks ---
+# 시나리오 인덱스를 인자로 받아 고유 키를 생성하도록 함수 수정
 def add_item(list_name, default_item):
     st.session_state.scenarios[st.session_state.active_scenario_index][list_name].append(default_item)
 
 def delete_item(list_name, index):
     st.session_state.scenarios[st.session_state.active_scenario_index][list_name].pop(index)
 
-def create_dynamic_list_ui(list_name, fields, title, default_item):
+def create_dynamic_list_ui(list_name, fields, title, default_item, scenario_index):
     st.markdown(f"<h5>{title}</h5>", unsafe_allow_html=True)
-    active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
+    active_scenario = st.session_state.scenarios[scenario_index]
     if list_name not in active_scenario: active_scenario[list_name] = []
 
     for i, item in enumerate(active_scenario[list_name]):
         cols = st.columns([f['width'] for f in fields] + [1])
         for j, field in enumerate(fields):
-            if field['type'] == 'text': item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], key=f"{list_name}_{i}_{field['key']}")
-            elif field['type'] == 'number': item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], key=f"{list_name}_{i}_{field['key']}")
-            elif field['type'] == 'select': item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), key=f"{list_name}_{i}_{field['key']}")
+            # 모든 위젯 키에 시나리오 인덱스를 포함하여 고유하게 만듦
+            unique_key = f"scen_{scenario_index}_{list_name}_{i}_{field['key']}"
+            if field['type'] == 'text': 
+                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], key=unique_key)
+            elif field['type'] == 'number': 
+                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], key=unique_key)
+            elif field['type'] == 'select': 
+                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), key=unique_key)
         
         cols[-1].markdown('<div style="height: 28px;"></div>', unsafe_allow_html=True)
-        cols[-1].button("🗑️", key=f"{list_name}_del_{i}", help=f"Remove this item", on_click=delete_item, args=(list_name, i))
+        # 삭제 버튼 키도 고유하게 만듦
+        delete_key = f"scen_{scenario_index}_{list_name}_del_{i}"
+        cols[-1].button("🗑️", key=delete_key, help=f"Remove this item", on_click=delete_item, args=(list_name, i))
 
-    st.button(f"Add {title.replace('Recurring ','').replace('s','')}", key=f"add_{list_name}", use_container_width=True, on_click=add_item, args=(list_name, default_item))
+    # 추가 버튼 키도 고유하게 만듦
+    add_key = f"scen_{scenario_index}_add_{list_name}"
+    st.button(f"Add {title.replace('Recurring ','').replace('s','')}", key=add_key, use_container_width=True, on_click=add_item, args=(list_name, default_item))
 
 # --- Main App ---
 st.set_page_config(layout="wide")
@@ -276,27 +286,30 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     st.markdown("---")
     
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
+    active_scenario_index = st.session_state.active_scenario_index
     edit_section = st.selectbox("Edit Section", ["General & Tax Settings", "Recurring Incomes", "Recurring Expenses", "One-Time Events", "Market Volatility"])
     
     if edit_section == "General & Tax Settings":
-        active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'])
+        # 일반 설정 위젯에도 고유 키 부여
+        active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'], key=f"scen_{active_scenario_index}_name")
         cols = st.columns(5)
-        active_scenario['initialInvestment'] = cols[0].number_input("Initial Inv. ($)", value=active_scenario['initialInvestment'], format="%d")
-        active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'])
-        active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d")
-        active_scenario['startYear'] = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d")
-        active_scenario['endYear'] = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d")
+        active_scenario['initialInvestment'] = cols[0].number_input("Initial Inv. ($)", value=active_scenario['initialInvestment'], format="%d", key=f"scen_{active_scenario_index}_inv")
+        active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'], key=f"scen_{active_scenario_index}_ret")
+        active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d", key=f"scen_{active_scenario_index}_birth")
+        active_scenario['startYear'] = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d", key=f"scen_{active_scenario_index}_start")
+        active_scenario['endYear'] = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d", key=f"scen_{active_scenario_index}_end")
         st.markdown("<h6>Tax Settings</h6>", unsafe_allow_html=True)
-        active_scenario['us_dividend_account'] = st.selectbox("US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"), index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account']))
+        active_scenario['us_dividend_account'] = st.selectbox("US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"), index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account']), key=f"scen_{active_scenario_index}_usdiv")
     
+    # create_dynamic_list_ui 함수 호출 시 시나리오 인덱스 전달
     elif edit_section == "Recurring Incomes":
-        create_dynamic_list_ui('incomes', [{'key': 'type', 'label': 'Type', 'type': 'select', 'options': INCOME_TYPES, 'default': 'Other Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', {'type': 'Other Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5})
+        create_dynamic_list_ui('incomes', [{'key': 'type', 'label': 'Type', 'type': 'select', 'options': INCOME_TYPES, 'default': 'Other Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', {'type': 'Other Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5}, active_scenario_index)
     elif edit_section == "Recurring Expenses":
-        create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', {'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3})
+        create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', {'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3}, active_scenario_index)
     elif edit_section == "One-Time Events":
-        create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', {'name': 'New Event', 'type': 'Expense', 'amount': 20000, 'year': TODAY_YEAR + 15})
+        create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', {'name': 'New Event', 'type': 'Expense', 'amount': 20000, 'year': TODAY_YEAR + 15}, active_scenario_index)
     elif edit_section == "Market Volatility":
-        create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', {'startYear': TODAY_YEAR + 10, 'duration': 2, 'totalDecline': 30, 'timing': 'start'})
+        create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', {'startYear': TODAY_YEAR + 10, 'duration': 2, 'totalDecline': 30, 'timing': 'start'}, active_scenario_index)
 
 # --- Simulation Runner ---
 if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_width=True):
@@ -339,7 +352,6 @@ if st.session_state.results:
                 depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
                 summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
 
-        # 그래프 레이아웃 업데이트: hovermode를 'x unified'로 변경
         fig.update_layout(
             title="Retirement Portfolio Projection", 
             xaxis_title="Year", 
@@ -349,7 +361,7 @@ if st.session_state.results:
             legend_title="Scenarios", 
             template="plotly_dark", 
             height=500, 
-            hovermode='x unified', # 이 부분을 수정했습니다.
+            hovermode='x unified',
             xaxis=dict(fixedrange=True),
             yaxis=dict(fixedrange=True)
         )
