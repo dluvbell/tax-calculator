@@ -16,7 +16,6 @@ OAS_CLAWBACK_RATE = 0.15
 ELIGIBLE_DIVIDEND_GROSS_UP = 1.38
 FED_ELIGIBLE_DIVIDEND_CREDIT_RATE = 0.150198
 ON_ELIGIBLE_DIVIDEND_CREDIT_RATE = 0.10
-# CPP/OAS 분리: 정확한 OAS Clawback 계산을 위해 소득 유형 업데이트
 INCOME_TYPES = ['CPP', 'OAS', 'Pension/RRIF', 'Eligible Canadian Dividends', 'US Dividends', 'Interest', 'Capital Gains', 'Other Income']
 INCOME_TYPE_MAP = {
     'CPP': 'cpp', 'OAS': 'oas', 'Pension/RRIF': 'pension_rrif', 'Eligible Canadian Dividends': 'cdn_dividends',
@@ -38,20 +37,11 @@ def format_currency(amount):
     return f"${amount:,.0f}"
 
 # --- Core Tax Calculation Logic ---
-def calculate_progressive_tax(income, brackets):
-    tax = 0
-    previous_bracket_limit = 0
-    for limit, rate in brackets.items():
-        if income > limit:
-            tax += (limit - previous_bracket_limit) * rate
-            previous_bracket_limit = limit
-        else:
-            tax += (income - previous_bracket_limit) * rate
-            break
-    return tax
-
 def calculate_after_tax_income(yearly_income_details, us_dividend_account):
     gross_income = sum(yearly_income_details.values())
+    if gross_income == 0:
+        return 0, 0
+
     eligible_dividends_actual = yearly_income_details.get('cdn_dividends', 0)
     grossed_up_dividends = eligible_dividends_actual * ELIGIBLE_DIVIDEND_GROSS_UP
     us_dividends_cad = yearly_income_details.get('us_dividends', 0)
@@ -70,7 +60,8 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
         if k not in ['Eligible Canadian Dividends', 'US Dividends', 'Capital Gains']
     ]) + grossed_up_dividends + taxable_us_dividends + capital_gains_taxable
 
-    if total_taxable_income <= 0: return gross_income
+    if total_taxable_income <= 0:
+        return gross_income, gross_income
 
     federal_tax_before_credits = calculate_progressive_tax(total_taxable_income, FED_BRACKETS_2025)
     provincial_tax_before_credits = calculate_progressive_tax(total_taxable_income, ON_BRACKETS_2025)
@@ -97,7 +88,8 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
         oas_clawback = min(oas_clawback, oas_income)
 
     total_tax = federal_tax + provincial_tax + oas_clawback
-    return gross_income - total_tax
+    net_income = gross_income - total_tax
+    return gross_income, net_income
 
 # --- Core Retirement Simulation Engine ---
 def run_simulation(scenario, exchange_rate):
@@ -117,8 +109,10 @@ def run_simulation(scenario, exchange_rate):
     yearly_data, depletion_year = [], None
 
     for year in range(scenario['startYear'], scenario['endYear'] + 1):
+        gross_annual_income = 0
+        net_annual_income = 0
+        
         if investment <= 0 and depletion_year is None: depletion_year = year
-        yearly_data.append({'year': year, 'age': year - scenario['birthYear'], 'balance': round(max(0, investment))})
 
         for crash in scenario.get('marketCrashes', []):
             duration = int(crash.get('duration', 1))
@@ -140,7 +134,7 @@ def run_simulation(scenario, exchange_rate):
                 if income_type_key == 'us_dividends': future_value *= exchange_rate
                 yearly_income_details[income_type_key] = yearly_income_details.get(income_type_key, 0) + future_value
         
-        net_annual_income = calculate_after_tax_income(yearly_income_details, scenario['us_dividend_account'])
+        gross_annual_income, net_annual_income = calculate_after_tax_income(yearly_income_details, scenario['us_dividend_account'])
         net_annual_expense = sum(float(exp['amount']) * ((1 + float(exp['growthRate']) / 100) ** (year - TODAY_YEAR)) for exp in scenario['expenses'])
         
         investment += (net_annual_income - net_annual_expense)
@@ -150,6 +144,14 @@ def run_simulation(scenario, exchange_rate):
             duration = int(crash.get('duration', 1))
             if duration > 0 and crash.get('timing') == 'end' and year >= int(crash['startYear']) and year < int(crash['startYear']) + duration:
                 investment *= (1 - float(crash['totalDecline']) / 100) ** (1 / duration)
+        
+        yearly_data.append({
+            'year': year, 
+            'age': year - scenario['birthYear'], 
+            'gross_income': gross_annual_income,
+            'net_income': net_annual_income,
+            'balance': round(max(0, investment))
+        })
             
     return {'data': yearly_data, 'depletion_year': depletion_year, 'errors': None}
 
@@ -179,7 +181,6 @@ def create_dynamic_list_ui(list_name, fields, title, default_item):
 
 # --- Main App ---
 st.set_page_config(layout="wide")
-# CSS to hide number input steppers and adjust button layout
 st.markdown("""
 <style>
     /* Hide number input steppers */
@@ -242,10 +243,7 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
 
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
     
-    # --- Responsive Layout for Scenario Controls ---
-    # Create two main columns. The ratio determines the width on large screens.
     left_col, right_col = st.columns([2, 1])
-
     with left_col:
         scenario_names = [s['name'] for s in st.session_state.scenarios]
         st.selectbox(
@@ -255,11 +253,9 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
             index=st.session_state.active_scenario_index, 
             key="scenario_selector", 
             on_change=update_active_index,
-            label_visibility="collapsed" # Hide label to save space
+            label_visibility="collapsed"
         )
-
     with right_col:
-        # Create three nested columns for the buttons
         b1, b2, b3 = st.columns(3)
         b1.button("➕", help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb, use_container_width=True)
         b2.button("📋", help="Copy the current scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb, use_container_width=True)
@@ -331,7 +327,20 @@ if st.session_state.results:
                 depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
                 summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
 
-        fig.update_layout(title="Retirement Portfolio Projection", xaxis_title="Year", yaxis_title="Portfolio Balance", yaxis_tickprefix="$", yaxis_tickformat="~s", legend_title="Scenarios", template="plotly_dark", height=500, hovermode='x unified')
+        # 그래프 레이아웃 업데이트: 줌 기능 비활성화 및 hover 모드 변경
+        fig.update_layout(
+            title="Retirement Portfolio Projection", 
+            xaxis_title="Year", 
+            yaxis_title="Portfolio Balance", 
+            yaxis_tickprefix="$", 
+            yaxis_tickformat="~s", 
+            legend_title="Scenarios", 
+            template="plotly_dark", 
+            height=500, 
+            hovermode='closest',
+            xaxis=dict(fixedrange=True),
+            yaxis=dict(fixedrange=True)
+        )
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("<h5>Results Summary</h5>", unsafe_allow_html=True)
@@ -342,8 +351,11 @@ if st.session_state.results:
             idx = [s['name'] for s in st.session_state.scenarios].index(selected_scenario_for_table)
             if st.session_state.results[idx] and st.session_state.results[idx].get('data'):
                 df = pd.DataFrame(st.session_state.results[idx]['data'])
+                df['gross_income'] = df['gross_income'].apply(format_currency)
+                df['net_income'] = df['net_income'].apply(format_currency)
                 df['balance'] = df['balance'].apply(format_currency)
-                st.dataframe(df.set_index('year'), use_container_width=True)
+                df_display = df[['year', 'age', 'gross_income', 'net_income', 'balance']]
+                st.dataframe(df_display.set_index('year'), use_container_width=True)
 
 else:
     st.info("Adjust settings in the expander above and click 'Run & Compare All Scenarios'.")
