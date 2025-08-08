@@ -16,9 +16,10 @@ OAS_CLAWBACK_RATE = 0.15
 ELIGIBLE_DIVIDEND_GROSS_UP = 1.38
 FED_ELIGIBLE_DIVIDEND_CREDIT_RATE = 0.150198
 ON_ELIGIBLE_DIVIDEND_CREDIT_RATE = 0.10
-INCOME_TYPES = ['CPP/OAS', 'Pension/RRIF', 'Eligible Canadian Dividends', 'US Dividends', 'Interest', 'Capital Gains', 'Other Income']
+# CPP/OAS 분리: 정확한 OAS Clawback 계산을 위해 소득 유형 업데이트
+INCOME_TYPES = ['CPP', 'OAS', 'Pension/RRIF', 'Eligible Canadian Dividends', 'US Dividends', 'Interest', 'Capital Gains', 'Other Income']
 INCOME_TYPE_MAP = {
-    'CPP/OAS': 'cpp_oas', 'Pension/RRIF': 'pension_rrif', 'Eligible Canadian Dividends': 'cdn_dividends',
+    'CPP': 'cpp', 'OAS': 'oas', 'Pension/RRIF': 'pension_rrif', 'Eligible Canadian Dividends': 'cdn_dividends',
     'US Dividends': 'us_dividends', 'Interest': 'interest', 'Capital Gains': 'capital_gains', 'Other Income': 'other_income'
 }
 
@@ -89,7 +90,8 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
     federal_tax, provincial_tax = max(0, federal_tax), max(0, provincial_tax)
 
     net_income_for_clawback = total_taxable_income - (grossed_up_dividends - eligible_dividends_actual)
-    oas_income = yearly_income_details.get('cpp_oas', 0) # Approximation
+    # OAS Clawback 계산 로직 수정: 'oas' 키를 직접 사용하여 정확한 OAS 수입을 가져옴
+    oas_income = yearly_income_details.get('oas', 0) 
     oas_clawback = 0
     if net_income_for_clawback > OAS_CLAWBACK_THRESHOLD_2025:
         oas_clawback = (net_income_for_clawback - OAS_CLAWBACK_THRESHOLD_2025) * OAS_CLAWBACK_RATE
@@ -194,10 +196,11 @@ st.markdown("""
 
     /* Force scenario manager buttons to be in a row on mobile */
     @media (max-width: 640px) {
-        div[data-testid="stExpander"] div[data-testid="stHorizontalBlock"] {
-            flex-direction: row !important;
-            flex-wrap: wrap;
-            justify-content: center;
+        /* This selector targets the specific horizontal block containing the scenario buttons */
+        div[data-testid="stExpander"] div[data-testid="stVerticalBlock"] > div:nth-of-type(2) > div[data-testid="stHorizontalBlock"] {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 0.5rem;
         }
     }
 </style>
@@ -207,7 +210,23 @@ st.title("📈 Integrated Retirement & Tax Planner")
 st.markdown("An advanced simulator combining long-term retirement planning with detailed annual tax calculations.")
 
 if 'scenarios' not in st.session_state:
-    st.session_state.scenarios = [{'name': 'My Retirement Plan', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [{'type': 'CPP/OAS', 'amount': 15000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5}], 'expenses': [{'name': 'Base Expenses', 'amount': 60000, 'growthRate': 3.0}], 'oneTimeEvents': [], 'marketCrashes': []}]
+    st.session_state.scenarios = [{
+        'name': 'My Retirement Plan', 
+        'initialInvestment': 500000, 
+        'investmentReturn': 6, 
+        'birthYear': 1980, 
+        'startYear': TODAY_YEAR + 20, 
+        'endYear': TODAY_YEAR + 50, 
+        'us_dividend_account': 'Non-Registered', 
+        'incomes': [
+            # 기본 소득 항목을 CPP와 OAS로 분리
+            {'type': 'OAS', 'amount': 8000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5},
+            {'type': 'CPP', 'amount': 9000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5}
+        ], 
+        'expenses': [{'name': 'Base Expenses', 'amount': 60000, 'growthRate': 3.0}], 
+        'oneTimeEvents': [], 
+        'marketCrashes': []
+    }]
 if 'active_scenario_index' not in st.session_state: st.session_state.active_scenario_index = 0
 if 'results' not in st.session_state: st.session_state.results = None
 
@@ -232,6 +251,7 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     st.selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
     
     sc_cols = st.columns(3)
+    # 버튼에서 use_container_width 제거하여 아이콘 크기에 맞게 조절
     sc_cols[0].button("➕", help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
     sc_cols[1].button("📋", help="Copy the current scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
     sc_cols[2].button("🗑️", help="Delete the current scenario", disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
