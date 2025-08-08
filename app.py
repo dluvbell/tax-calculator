@@ -160,22 +160,17 @@ def create_dynamic_list_ui(list_name, fields, title, default_item):
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
     if list_name not in active_scenario: active_scenario[list_name] = []
 
-    # Header
-    cols = st.columns([f['width'] for f in fields] + [1])
-    for j, field in enumerate(fields):
-        cols[j].markdown(f"<small>{field['label']}</small>", unsafe_allow_html=True)
-
     for i, item in enumerate(active_scenario[list_name]):
         cols = st.columns([f['width'] for f in fields] + [1])
         for j, field in enumerate(fields):
             if field['type'] == 'text':
-                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}")
+                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], key=f"{list_name}_{i}_{field['key']}")
             elif field['type'] == 'number':
-                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}")
+                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], key=f"{list_name}_{i}_{field['key']}")
             elif field['type'] == 'select':
-                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}")
+                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), key=f"{list_name}_{i}_{field['key']}")
         
-        cols[-1].markdown('<div style="height: 28px;"></div>', unsafe_allow_html=True)
+        cols[-1].markdown('<div style="height: 28px;"></div>', unsafe_allow_html=True) # Spacer for alignment
         cols[-1].button("🗑️", key=f"{list_name}_del_{i}", help=f"Remove this item", on_click=delete_item, args=(list_name, i))
 
     st.button(f"Add {title.replace('Recurring ','').replace('s','')}", key=f"add_{list_name}", use_container_width=True, on_click=add_item, args=(list_name, default_item))
@@ -195,7 +190,6 @@ if 'results' not in st.session_state:
 
 # --- UI LAYOUT RESTRUCTURED WITH DROPDOWN ---
 with st.expander("⚙️ Settings & Inputs", expanded=True):
-    # --- Top Section: Scenario Manager ---
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
     
     def update_active_index():
