@@ -37,7 +37,6 @@ def format_currency(amount):
     return f"${amount:,.0f}"
 
 # --- Core Tax Calculation Logic ---
-# NameError 수정을 위해 삭제되었던 함수 복원
 def calculate_progressive_tax(income, brackets):
     tax = 0
     previous_bracket_limit = 0
@@ -340,6 +339,7 @@ if st.session_state.results:
                 depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
                 summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
 
+        # 그래프 레이아웃 업데이트: hovermode를 'x unified'로 변경
         fig.update_layout(
             title="Retirement Portfolio Projection", 
             xaxis_title="Year", 
@@ -349,7 +349,7 @@ if st.session_state.results:
             legend_title="Scenarios", 
             template="plotly_dark", 
             height=500, 
-            hovermode='closest',
+            hovermode='x unified', # 이 부분을 수정했습니다.
             xaxis=dict(fixedrange=True),
             yaxis=dict(fixedrange=True)
         )
