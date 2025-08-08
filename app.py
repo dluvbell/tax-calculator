@@ -122,7 +122,12 @@ def run_simulation(scenario, exchange_rate, investment_return=None):
 
     years_to_grow = scenario['startYear'] - TODAY_YEAR
     if years_to_grow > 0:
-        investment *= (1 + investment_return) ** years_to_grow
+        # For Monte Carlo, apply random returns only during retirement years
+        if isinstance(investment_return, dict):
+            pre_retirement_return = np.mean(list(investment_return.values()))
+            investment *= (1 + pre_retirement_return) ** years_to_grow
+        else:
+            investment *= (1 + investment_return) ** years_to_grow
 
     yearly_data, depletion_year = [], None
     
@@ -184,12 +189,10 @@ def run_monte_carlo_simulation(scenario, exchange_rate, mean_return, std_dev, nu
     num_success = 0
     
     for _ in range(num_simulations):
-        # Generate random returns for the entire simulation period
         sim_years = range(scenario['startYear'], scenario['endYear'] + 1)
         random_returns = np.random.normal(mean_return / 100, std_dev / 100, len(sim_years))
         yearly_returns = {year: ret for year, ret in zip(sim_years, random_returns)}
         
-        # Run a single simulation with this random return sequence
         result = run_simulation(scenario, exchange_rate, investment_return=yearly_returns)
         
         if result and not result['errors']:
@@ -202,8 +205,6 @@ def run_monte_carlo_simulation(scenario, exchange_rate, mean_return, std_dev, nu
         return None
 
     success_rate = (num_success / num_simulations) * 100
-    
-    # Transpose results for easier percentile calculation
     results_by_year = np.array(all_sim_results).T
     
     percentiles = {
@@ -291,7 +292,7 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     # --- Scenario Manager ---
     def update_active_index(): 
         st.session_state.active_scenario_index = st.session_state.scenario_selector
-        st.session_state.mc_results = None # Reset Monte Carlo results when scenario changes
+        st.session_state.mc_results = None 
     def add_scenario_cb():
         new_scenario = {'name': f'Scenario {len(st.session_state.scenarios) + 1}', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [], 'expenses': [], 'oneTimeEvents': [], 'marketCrashes': []}
         st.session_state.scenarios.append(new_scenario)
@@ -362,12 +363,65 @@ if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_w
     exchange_rate = get_exchange_rate()
     with st.spinner("Calculating all scenarios..."):
         st.session_state.results = [run_simulation(s, exchange_rate) for s in st.session_state.scenarios]
-    st.session_state.mc_results = None # Clear MC results when deterministic is run
+    st.session_state.mc_results = None 
 
 # --- Results Display ---
 st.header("📊 Simulation Results")
 if st.session_state.results:
-    # ... (rest of the deterministic results display code is the same)
+    if len(st.session_state.results) > len(st.session_state.scenarios):
+        st.session_state.results = st.session_state.results[:len(st.session_state.scenarios)]
+
+    has_errors = any(res.get('errors') for res in st.session_state.results)
+    if has_errors:
+        for i, result in enumerate(st.session_state.results):
+            if i < len(st.session_state.scenarios) and result.get('errors'):
+                st.error(f"**Scenario '{st.session_state.scenarios[i]['name']}' has input errors:**")
+                for error in result['errors']:
+                    st.warning(f"- {error}")
+    else:
+        fig = go.Figure()
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        symbols = ['circle', 'square', 'diamond', 'cross', 'x']
+        summary_data = []
+
+        for i, result in enumerate(st.session_state.results):
+            if i < len(st.session_state.scenarios):
+                scenario = st.session_state.scenarios[i]
+                if result and result.get('data'):
+                    years = [d['year'] for d in result['data']]
+                    balances = [d['balance'] for d in result['data']]
+                    ages = [d['age'] for d in result['data']]
+                    
+                    fig.add_trace(go.Scatter(x=years, y=balances, mode='lines+markers', name=scenario['name'], line=dict(color=colors[i % len(colors)], width=3), marker=dict(size=7, symbol=symbols[i % len(symbols)]), hovertext=[f"Age: {age}" for age in ages], hovertemplate='<b>%{data.name}</b><br><b>Year:</b> %{x}<br><b>Balance:</b> %{y:$,.0f}<br><b>%{hovertext}</b><extra></extra>'))
+                    
+                    final_balance = balances[-1] if balances else 0
+                    depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
+                    summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
+
+        fig.update_layout(title="Retirement Portfolio Projection", xaxis_title="Year", yaxis_title="Portfolio Balance", yaxis_tickprefix="$", yaxis_tickformat="~s", legend_title="Scenarios", template="plotly_dark", height=500, hovermode='x unified', xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
+        st.plotly_chart(fig, use_container_width=True)
+
+        if summary_data:
+            st.markdown("<h5>Results Summary</h5>", unsafe_allow_html=True)
+            st.table(pd.DataFrame(summary_data).set_index("Scenario"))
+
+        with st.expander("View Detailed Yearly Data"):
+            scenario_names_for_details = [s['name'] for s in st.session_state.scenarios]
+            if scenario_names_for_details:
+                selected_scenario_for_table = st.selectbox("Select scenario to view details", scenario_names_for_details)
+                idx = scenario_names_for_details.index(selected_scenario_for_table)
+                if st.session_state.results and len(st.session_state.results) > idx and st.session_state.results[idx].get('data'):
+                    df = pd.DataFrame(st.session_state.results[idx]['data'])
+                    df['gross_income'] = df['gross_income'].apply(format_currency)
+                    df['net_income'] = df['net_income'].apply(format_currency)
+                    df['balance'] = df['balance'].apply(format_currency)
+                    df_display = df[['year', 'age', 'gross_income', 'net_income', 'balance']]
+                    st.dataframe(df_display.set_index('year'), use_container_width=True)
+
+elif not st.session_state.scenarios:
+     st.info("Please add a new scenario to begin.")
+else:
+    st.info("Adjust settings in the expander above and click 'Run & Compare All Scenarios'.")
 
 # --- Monte Carlo Simulation Section ---
 with st.expander("🔬 Monte Carlo Simulation"):
@@ -391,38 +445,23 @@ with st.expander("🔬 Monte Carlo Simulation"):
             results = st.session_state.mc_results
             st.subheader("Monte Carlo Results")
             
-            # Display success rate
             st.metric(label="Retirement Plan Success Rate", value=f"{results['success_rate']:.1f}%")
             
-            # Create Fan Chart
             fig = go.Figure()
             years = results['years']
             p = results['percentiles']
             
-            # 90th percentile fill (best case)
             fig.add_trace(go.Scatter(x=years, y=p['p90'], mode='lines', line=dict(width=0), name='90th Percentile', showlegend=False))
             fig.add_trace(go.Scatter(x=years, y=p['p10'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 100, 80, 0.2)', name='10th-90th Percentile', showlegend=True))
             
-            # 75th percentile fill
             fig.add_trace(go.Scatter(x=years, y=p['p75'], mode='lines', line=dict(width=0), name='75th Percentile', showlegend=False))
             fig.add_trace(go.Scatter(x=years, y=p['p25'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 176, 246, 0.2)', name='25th-75th Percentile', showlegend=True))
 
-            # Median line
             fig.add_trace(go.Scatter(x=years, y=p['p50'], mode='lines', line=dict(color='white', width=3), name='Median Outcome'))
 
-            fig.update_layout(
-                title="Monte Carlo Portfolio Projection",
-                xaxis_title="Year",
-                yaxis_title="Portfolio Balance",
-                yaxis_tickprefix="$",
-                yaxis_tickformat="~s",
-                legend_title="Outcome Percentiles",
-                template="plotly_dark",
-                height=500
-            )
+            fig.update_layout(title="Monte Carlo Portfolio Projection", xaxis_title="Year", yaxis_title="Portfolio Balance", yaxis_tickprefix="$", yaxis_tickformat="~s", legend_title="Outcome Percentiles", template="plotly_dark", height=500)
             st.plotly_chart(fig, use_container_width=True)
 
-            # Summary Statistics
             st.markdown("##### Final Balance Summary")
             summary_cols = st.columns(3)
             summary_cols[0].metric("Worst 10% Outcome", format_currency(p['p10'][-1]))
