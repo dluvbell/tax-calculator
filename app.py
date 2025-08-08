@@ -28,7 +28,7 @@ def get_exchange_rate():
 def format_currency(amount):
     return f"${amount:,.0f}"
 
-# --- Core Tax Calculation Logic (from Net Income Calculator) ---
+# --- Core Tax Calculation Logic ---
 def calculate_progressive_tax(income, brackets):
     tax = 0
     previous_bracket_limit = 0
@@ -43,18 +43,11 @@ def calculate_progressive_tax(income, brackets):
             break
     return tax
 
-def calculate_after_tax_income(yearly_income_details):
-    """
-    Calculates the after-tax income for a given year's income details.
-    This is the integrated core of the net income calculator.
-    """
+def calculate_after_tax_income(yearly_income_details, us_dividend_account):
     gross_income = sum(yearly_income_details.values())
-    
     eligible_dividends_actual = yearly_income_details.get('cdn_dividends', 0)
     grossed_up_dividends = eligible_dividends_actual * ELIGIBLE_DIVIDEND_GROSS_UP
-
     us_dividends_cad = yearly_income_details.get('us_dividends', 0)
-    us_dividend_account = st.session_state.get('us_dividend_account', 'Non-Registered')
     
     taxable_us_dividends = 0
     us_withholding_tax = 0
@@ -74,8 +67,7 @@ def calculate_after_tax_income(yearly_income_details):
     federal_tax_before_credits = calculate_progressive_tax(total_taxable_income, FED_BRACKETS_2025)
     provincial_tax_before_credits = calculate_progressive_tax(total_taxable_income, ON_BRACKETS_2025)
     
-    federal_tax = federal_tax_before_credits
-    provincial_tax = provincial_tax_before_credits
+    federal_tax, provincial_tax = federal_tax_before_credits, provincial_tax_before_credits
 
     federal_tax -= min(total_taxable_income, FED_BPA_2025) * list(FED_BRACKETS_2025.values())[0]
     provincial_tax -= min(total_taxable_income, ON_BPA_2025) * list(ON_BRACKETS_2025.values())[0]
@@ -88,8 +80,7 @@ def calculate_after_tax_income(yearly_income_details):
         foreign_tax_credit = min(us_withholding_tax, canadian_tax_on_us_income)
         federal_tax -= foreign_tax_credit
 
-    federal_tax = max(0, federal_tax)
-    provincial_tax = max(0, provincial_tax)
+    federal_tax, provincial_tax = max(0, federal_tax), max(0, provincial_tax)
 
     net_income_for_clawback = total_taxable_income - (grossed_up_dividends - eligible_dividends_actual)
     oas_clawback = 0
@@ -102,31 +93,37 @@ def calculate_after_tax_income(yearly_income_details):
     return net_income
 
 # --- Core Retirement Simulation Engine ---
-def run_simulation(scenario):
+def run_simulation(scenario, exchange_rate):
     investment = float(scenario['initialInvestment'])
     yearly_data = []
-    
+    depletion_year = None
+
     for year in range(TODAY_YEAR, scenario['endYear'] + 1):
-        start_balance = investment
+        if investment <= 0 and depletion_year is None:
+            depletion_year = year
         
-        # Calculate Future Value of all incomes for the current year
+        balance = max(0, investment)
+        age = year - scenario['birthYear']
+        yearly_data.append({'year': year, 'age': age, 'balance': round(balance)})
+
+        # Calculate Future Value of all incomes
         yearly_income_details = {}
         for income in scenario['incomes']:
             if year >= int(income['startYear']):
-                years_active = year - int(income['startYear'])
-                future_value = float(income['amount']) * ((1 + float(income['growthRate']) / 100) ** years_active)
+                # Calculate future value from today's dollars
+                years_from_today = int(income['startYear']) - TODAY_YEAR
+                amount_at_start = float(income['amount']) * ((1 + float(income['growthRate']) / 100) ** years_from_today)
                 
-                # Categorize income for tax calculation
-                income_type = 'other_income' # default
-                if 'cpp' in income['name'].lower() or 'oas' in income['name'].lower():
-                    income_type = 'cpp_oas'
-                elif 'pension' in income['name'].lower() or 'rrif' in income['name'].lower():
-                    income_type = 'pension_rrif'
-                
-                yearly_income_details[income_type] = yearly_income_details.get(income_type, 0) + future_value
+                years_since_start = year - int(income['startYear'])
+                future_value = amount_at_start * ((1 + float(income['growthRate']) / 100) ** years_since_start)
 
-        # Calculate this year's after-tax income using the integrated function
-        net_annual_income = calculate_after_tax_income(yearly_income_details)
+                income_type = income.get('type', 'other_income')
+                if income_type == 'us_dividends':
+                    future_value *= exchange_rate
+
+                yearly_income_details[income_type] = yearly_income_details.get(income_type, 0) + future_value
+        
+        net_annual_income = calculate_after_tax_income(yearly_income_details, scenario['us_dividend_account'])
 
         # Calculate Future Value of expenses
         net_annual_expense = sum(
@@ -134,144 +131,158 @@ def run_simulation(scenario):
             for exp in scenario['expenses']
         )
         
-        # Apply net income/expense
         investment += (net_annual_income - net_annual_expense)
         
-        # Apply investment return
         if investment > 0:
             investment *= (1 + float(scenario['investmentReturn']) / 100)
-
-        yearly_data.append({'year': year, 'balance': round(investment)})
-        if investment <= 0:
-            break
             
-    return yearly_data
+    return {'data': yearly_data, 'depletion_year': depletion_year}
 
 # --- UI Components ---
 def income_input_ui(key_suffix):
-    st.markdown("##### Recurring Incomes")
-    if 'incomes' not in st.session_state:
-        st.session_state.incomes = []
-
-    for i, income in enumerate(st.session_state.incomes):
+    st.markdown("<h6>Recurring Incomes</h6>", unsafe_allow_html=True)
+    for i, income in enumerate(st.session_state.scenarios[st.session_state.active_scenario_index]['incomes']):
         cols = st.columns([3, 2, 2, 2, 1])
         income['name'] = cols[0].text_input("Name", value=income['name'], key=f"in_name_{i}_{key_suffix}")
         income['amount'] = cols[1].number_input("Amount (Today's $)", value=income['amount'], key=f"in_amount_{i}_{key_suffix}")
-        income['startYear'] = cols[2].number_input("Start Year", value=income['startYear'], key=f"in_start_{i}_{key_suffix}")
+        income['startYear'] = cols[2].number_input("Start Year", value=income['startYear'], min_value=TODAY_YEAR, key=f"in_start_{i}_{key_suffix}")
         income['growthRate'] = cols[3].number_input("Growth (%)", value=income['growthRate'], key=f"in_growth_{i}_{key_suffix}")
-        if cols[4].button("🗑️", key=f"in_del_{i}_{key_suffix}"):
-            st.session_state.incomes.pop(i)
-            st.rerun() # BUG FIX: Replaced st.experimental_rerun()
+        if cols[4].button("🗑️", key=f"in_del_{i}_{key_suffix}", help="Remove this income item"):
+            st.session_state.scenarios[st.session_state.active_scenario_index]['incomes'].pop(i)
+            st.rerun()
 
     if st.button("Add Income", key=f"add_income_{key_suffix}"):
-        st.session_state.incomes.append({'name': 'New Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5})
-        st.rerun() # BUG FIX: Replaced st.experimental_rerun()
+        st.session_state.scenarios[st.session_state.active_scenario_index]['incomes'].append({'name': 'New Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5, 'type': 'other_income'})
+        st.rerun()
 
 def expense_input_ui(key_suffix):
-    st.markdown("##### Recurring Expenses")
-    if 'expenses' not in st.session_state:
-        st.session_state.expenses = []
-
-    for i, exp in enumerate(st.session_state.expenses):
+    st.markdown("<h6>Recurring Expenses</h6>", unsafe_allow_html=True)
+    for i, exp in enumerate(st.session_state.scenarios[st.session_state.active_scenario_index]['expenses']):
         cols = st.columns([5, 3, 3, 1])
         exp['name'] = cols[0].text_input("Name", value=exp['name'], key=f"ex_name_{i}_{key_suffix}")
         exp['amount'] = cols[1].number_input("Amount (Today's $)", value=exp['amount'], key=f"ex_amount_{i}_{key_suffix}")
         exp['growthRate'] = cols[2].number_input("Growth (%)", value=exp['growthRate'], key=f"ex_growth_{i}_{key_suffix}")
-        if cols[3].button("🗑️", key=f"ex_del_{i}_{key_suffix}"):
-            st.session_state.expenses.pop(i)
-            st.rerun() # BUG FIX: Replaced st.experimental_rerun()
+        if cols[3].button("🗑️", key=f"ex_del_{i}_{key_suffix}", help="Remove this expense item"):
+            st.session_state.scenarios[st.session_state.active_scenario_index]['expenses'].pop(i)
+            st.rerun()
 
     if st.button("Add Expense", key=f"add_expense_{key_suffix}"):
-        st.session_state.expenses.append({'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3})
-        st.rerun() # BUG FIX: Replaced st.experimental_rerun()
+        st.session_state.scenarios[st.session_state.active_scenario_index]['expenses'].append({'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3})
+        st.rerun()
 
 # --- Main App Layout ---
 st.set_page_config(layout="wide")
-st.title("통합 은퇴 및 세후 소득 계산기")
-st.markdown("장기 은퇴 계획과 연간 세금 계산을 결합하여 정확한 자산 변화를 시뮬레이션합니다.")
+st.title("📈 Integrated Retirement & Tax Planner")
+st.markdown("An advanced simulator combining long-term retirement planning with detailed annual tax calculations.")
 
 # Initialize session state
 if 'scenarios' not in st.session_state:
     st.session_state.scenarios = [{
-        'name': 'My Retirement Plan',
-        'initialInvestment': 500000, 'investmentReturn': 6, 'endYear': TODAY_YEAR + 40,
-        'incomes': [{'name': 'CPP/OAS', 'amount': 15000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5}],
+        'name': 'My Retirement Plan', 'initialInvestment': 500000, 'investmentReturn': 6, 
+        'birthYear': 1980, 'endYear': TODAY_YEAR + 40, 'us_dividend_account': 'Non-Registered',
+        'incomes': [{'name': 'CPP/OAS', 'amount': 15000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5, 'type': 'cpp_oas'}],
         'expenses': [{'name': 'Base Expenses', 'amount': 60000, 'growthRate': 3.0}]
     }]
+if 'active_scenario_index' not in st.session_state:
+    st.session_state.active_scenario_index = 0
+if 'results' not in st.session_state:
+    st.session_state.results = None
 
-# Sidebar for scenario management and inputs
-with st.sidebar:
-    st.header("⚙️ Inputs & Settings")
-    
+# --- UI LAYOUT RESTRUCTURED ---
+# All inputs are now in the main body, inside an expander.
+with st.expander("⚙️ Settings & Inputs", expanded=True):
+    # --- Scenario Manager ---
+    st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
     scenario_names = [s['name'] for s in st.session_state.scenarios]
-    selected_scenario_name = st.selectbox("Select Scenario", scenario_names)
-    active_scenario_index = scenario_names.index(selected_scenario_name)
+    st.session_state.active_scenario_index = scenario_names.index(st.selectbox("Active Scenario", scenario_names, index=st.session_state.active_scenario_index))
     
-    st.markdown("---")
+    # --- General Settings ---
+    st.markdown("<h5>General Settings</h5>", unsafe_allow_html=True)
+    active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
+    active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'])
     
-    # Scenario details
-    st.session_state.scenarios[active_scenario_index]['name'] = st.text_input(
-        "Scenario Name", value=st.session_state.scenarios[active_scenario_index]['name']
+    cols = st.columns(4)
+    active_scenario['initialInvestment'] = cols[0].number_input("Initial Investments ($)", value=active_scenario['initialInvestment'], format="%d")
+    active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'])
+    active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d")
+    active_scenario['endYear'] = cols[3].number_input("End Year", value=active_scenario['endYear'], format="%d")
+    
+    # --- Tax Settings ---
+    st.markdown("<h5>Tax Settings</h5>", unsafe_allow_html=True)
+    active_scenario['us_dividend_account'] = st.selectbox(
+        "US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"),
+        help="Select the account type where US dividends are received. This affects the tax calculation for all US dividend income items."
     )
     
-    cols = st.columns(2)
-    st.session_state.scenarios[active_scenario_index]['initialInvestment'] = cols[0].number_input("Initial Investments", value=st.session_state.scenarios[active_scenario_index]['initialInvestment'])
-    st.session_state.scenarios[active_scenario_index]['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=st.session_state.scenarios[active_scenario_index]['investmentReturn'])
-    st.session_state.scenarios[active_scenario_index]['endYear'] = st.slider("Retirement End Year", TODAY_YEAR, TODAY_YEAR + 60, st.session_state.scenarios[active_scenario_index]['endYear'])
+    st.markdown("<hr>", unsafe_allow_html=True)
 
-    st.session_state.us_dividend_account = st.selectbox(
-        "US Dividend Account Type", 
-        ("Non-Registered", "RRSP/RRIF", "TFSA"),
-        help="모든 미국 배당금에 적용될 계좌 유형을 선택하세요."
-    )
+    # --- Income & Expenses Inputs ---
+    income_expense_cols = st.columns(2)
+    with income_expense_cols[0]:
+        income_input_ui(st.session_state.active_scenario_index)
+    with income_expense_cols[1]:
+        expense_input_ui(st.session_state.active_scenario_index)
 
-    with st.expander("Income & Expenses", expanded=True):
-        # Use session state directly for incomes/expenses to persist them
-        if 'incomes' not in st.session_state:
-            st.session_state.incomes = st.session_state.scenarios[active_scenario_index]['incomes']
-        if 'expenses' not in st.session_state:
-            st.session_state.expenses = st.session_state.scenarios[active_scenario_index]['expenses']
-            
-        income_input_ui(active_scenario_index)
-        st.markdown("---")
-        expense_input_ui(active_scenario_index)
+# --- Simulation Runner ---
+if st.button("🚀 Run Simulation", type="primary", use_container_width=True):
+    exchange_rate = get_exchange_rate()
+    with st.spinner("Calculating... This may take a moment."):
+        st.session_state.results = [run_simulation(s, exchange_rate) for s in st.session_state.scenarios]
 
-        # Sync back to the main scenario object before simulation
-        st.session_state.scenarios[active_scenario_index]['incomes'] = st.session_state.incomes
-        st.session_state.scenarios[active_scenario_index]['expenses'] = st.session_state.expenses
-
-# Main panel for results
+# --- Results Display ---
 st.header("📊 Simulation Results")
 
-if st.sidebar.button("Run Simulation", type="primary"):
-    with st.spinner("Calculating..."):
-        all_results = [run_simulation(s) for s in st.session_state.scenarios]
-
+if st.session_state.results:
+    # --- Chart ---
     fig = go.Figure()
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
+    summary_data = []
 
-    for i, result_data in enumerate(all_results):
-        if result_data:
-            years = [d['year'] for d in result_data]
-            balances = [d['balance'] for d in result_data]
+    for i, result in enumerate(st.session_state.results):
+        scenario = st.session_state.scenarios[i]
+        if result and result['data']:
+            years = [d['year'] for d in result['data']]
+            balances = [d['balance'] for d in result['data']]
+            ages = [d['age'] for d in result['data']]
+            
             fig.add_trace(go.Scatter(
                 x=years, y=balances,
-                mode='lines',
-                name=st.session_state.scenarios[i]['name'],
+                mode='lines+markers', # UI IMPROVEMENT: Added markers
+                name=scenario['name'],
                 line=dict(color=colors[i % len(colors)], width=3),
-                fill='tozeroy',
+                marker=dict(size=5),
+                hovertext=[f"Age: {age}" for age in ages],
+                hovertemplate='<b>Year:</b> %{x}<br><b>Balance:</b> %{y:$,.0f}<br><b>%{hovertext}</b><extra></extra>'
             ))
+            
+            final_balance = balances[-1] if balances else 0
+            depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
+            summary_data.append({
+                "Scenario": scenario['name'],
+                "Final Balance": format_currency(final_balance),
+                "Funds Depleted In": depletion_text
+            })
 
     fig.update_layout(
         title="Retirement Portfolio Projection",
-        xaxis_title="Year",
-        yaxis_title="Portfolio Balance",
-        yaxis_tickprefix="$",
-        yaxis_tickformat="~s",
-        legend_title="Scenarios",
-        template="plotly_dark"
+        xaxis_title="Year", yaxis_title="Portfolio Balance",
+        yaxis_tickprefix="$", yaxis_tickformat="~s",
+        legend_title="Scenarios", template="plotly_dark", height=500
     )
     st.plotly_chart(fig, use_container_width=True)
 
+    # --- Summary Table (UI IMPROVEMENT) ---
+    st.markdown("<h5>Results Summary</h5>", unsafe_allow_html=True)
+    st.table(pd.DataFrame(summary_data).set_index("Scenario"))
+
+    # --- Detailed Data Table ---
+    with st.expander("View Detailed Yearly Data"):
+        selected_scenario_for_table = st.selectbox("Select scenario to view details", [s['name'] for s in st.session_state.scenarios])
+        idx = [s['name'] for s in st.session_state.scenarios].index(selected_scenario_for_table)
+        if st.session_state.results[idx]:
+            df = pd.DataFrame(st.session_state.results[idx]['data'])
+            df['balance'] = df['balance'].apply(format_currency)
+            st.dataframe(df.set_index('year'), use_container_width=True)
+
 else:
-    st.info("입력값을 조정한 후 'Run Simulation' 버튼을 눌러주세요.")
+    st.info("Adjust settings in the expander above and click 'Run Simulation'.")
