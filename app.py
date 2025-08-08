@@ -100,6 +100,15 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
 
 # --- Core Retirement Simulation Engine ---
 def run_simulation(scenario, exchange_rate):
+    # Data Validation
+    errors = []
+    if scenario['startYear'] > scenario['endYear']:
+        errors.append("Retirement Start Year cannot be after End Year.")
+    if scenario['birthYear'] >= scenario['startYear']:
+        errors.append("Birth Year must be before Retirement Start Year.")
+    if errors:
+        return {'errors': errors}
+
     investment = float(scenario['initialInvestment'])
     years_to_grow = scenario['startYear'] - TODAY_YEAR
     if years_to_grow > 0:
@@ -142,7 +151,7 @@ def run_simulation(scenario, exchange_rate):
             if duration > 0 and crash.get('timing') == 'end' and year >= int(crash['startYear']) and year < int(crash['startYear']) + duration:
                 investment *= (1 - float(crash['totalDecline']) / 100) ** (1 / duration)
             
-    return {'data': yearly_data, 'depletion_year': depletion_year}
+    return {'data': yearly_data, 'depletion_year': depletion_year, 'errors': None}
 
 # --- UI Components & Callbacks ---
 def add_item(list_name, default_item):
@@ -170,6 +179,19 @@ def create_dynamic_list_ui(list_name, fields, title, default_item):
 
 # --- Main App ---
 st.set_page_config(layout="wide")
+# CSS to hide number input steppers
+st.markdown("""<style>
+    /* Hide the up and down arrows on number inputs */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
+    input[type=number] {
+        -moz-appearance: textfield;
+    }
+</style>""", unsafe_allow_html=True)
+
 st.title("📈 Integrated Retirement & Tax Planner")
 st.markdown("An advanced simulator combining long-term retirement planning with detailed annual tax calculations.")
 
@@ -194,11 +216,15 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
         st.session_state.scenarios.pop(st.session_state.active_scenario_index)
         st.session_state.active_scenario_index = 0
 
-    sc_cols = st.columns([2, 0.5, 0.5, 0.5])
-    sc_cols[0].selectbox("Active Scenario", options=range(len(st.session_state.scenarios)), format_func=lambda x: st.session_state.scenarios[x]['name'], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
-    sc_cols[1].button("➕", help="Add New Scenario", use_container_width=True, disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
-    sc_cols[2].button("📄", help="Copy Current Scenario", use_container_width=True, disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
-    sc_cols[3].button("🗑️", help="Delete Current Scenario", use_container_width=True, disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
+    st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
+    scenario_names = [s['name'] for s in st.session_state.scenarios]
+    st.selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
+    
+    sc_cols = st.columns(3)
+    sc_cols[0].button("➕ Add New", use_container_width=True, disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
+    sc_cols[1].button("📄 Copy", use_container_width=True, disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
+    sc_cols[2].button("🗑️ Delete", use_container_width=True, disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
+    
     st.markdown("---")
     
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
@@ -233,43 +259,52 @@ if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_w
 # --- Results Display ---
 st.header("📊 Simulation Results")
 if st.session_state.results:
-    fig = go.Figure()
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-    symbols = ['circle', 'square', 'diamond', 'cross', 'x']
-    summary_data = []
+    # Check for errors from validation
+    has_errors = any(res.get('errors') for res in st.session_state.results)
+    if has_errors:
+        for i, result in enumerate(st.session_state.results):
+            if result.get('errors'):
+                st.error(f"**Scenario '{st.session_state.scenarios[i]['name']}' has input errors:**")
+                for error in result['errors']:
+                    st.warning(f"- {error}")
+    else:
+        fig = go.Figure()
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        symbols = ['circle', 'square', 'diamond', 'cross', 'x']
+        summary_data = []
 
-    for i, result in enumerate(st.session_state.results):
-        scenario = st.session_state.scenarios[i]
-        if result and result['data']:
-            years = [d['year'] for d in result['data']]
-            balances = [d['balance'] for d in result['data']]
-            ages = [d['age'] for d in result['data']]
-            
-            fig.add_trace(go.Scatter(
-                x=years, y=balances, mode='lines+markers', name=scenario['name'],
-                line=dict(color=colors[i % len(colors)], width=3),
-                marker=dict(size=7, symbol=symbols[i % len(symbols)]),
-                hovertext=[f"Age: {age}" for age in ages],
-                hovertemplate='<b>%{data.name}</b><br><b>Year:</b> %{x}<br><b>Balance:</b> %{y:$,.0f}<br><b>%{hovertext}</b><extra></extra>'
-            ))
-            
-            final_balance = balances[-1] if balances else 0
-            depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
-            summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
+        for i, result in enumerate(st.session_state.results):
+            scenario = st.session_state.scenarios[i]
+            if result and result.get('data'):
+                years = [d['year'] for d in result['data']]
+                balances = [d['balance'] for d in result['data']]
+                ages = [d['age'] for d in result['data']]
+                
+                fig.add_trace(go.Scatter(
+                    x=years, y=balances, mode='lines+markers', name=scenario['name'],
+                    line=dict(color=colors[i % len(colors)], width=3),
+                    marker=dict(size=7, symbol=symbols[i % len(symbols)]),
+                    hovertext=[f"Age: {age}" for age in ages],
+                    hovertemplate='<b>%{data.name}</b><br><b>Year:</b> %{x}<br><b>Balance:</b> %{y:$,.0f}<br><b>%{hovertext}</b><extra></extra>'
+                ))
+                
+                final_balance = balances[-1] if balances else 0
+                depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
+                summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
 
-    fig.update_layout(title="Retirement Portfolio Projection", xaxis_title="Year", yaxis_title="Portfolio Balance", yaxis_tickprefix="$", yaxis_tickformat="~s", legend_title="Scenarios", template="plotly_dark", height=500, hovermode='x unified')
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(title="Retirement Portfolio Projection", xaxis_title="Year", yaxis_title="Portfolio Balance", yaxis_tickprefix="$", yaxis_tickformat="~s", legend_title="Scenarios", template="plotly_dark", height=500, hovermode='x unified')
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("<h5>Results Summary</h5>", unsafe_allow_html=True)
-    st.table(pd.DataFrame(summary_data).set_index("Scenario"))
+        st.markdown("<h5>Results Summary</h5>", unsafe_allow_html=True)
+        st.table(pd.DataFrame(summary_data).set_index("Scenario"))
 
-    with st.expander("View Detailed Yearly Data"):
-        selected_scenario_for_table = st.selectbox("Select scenario to view details", [s['name'] for s in st.session_state.scenarios])
-        idx = [s['name'] for s in st.session_state.scenarios].index(selected_scenario_for_table)
-        if st.session_state.results[idx]:
-            df = pd.DataFrame(st.session_state.results[idx]['data'])
-            df['balance'] = df['balance'].apply(format_currency)
-            st.dataframe(df.set_index('year'), use_container_width=True)
+        with st.expander("View Detailed Yearly Data"):
+            selected_scenario_for_table = st.selectbox("Select scenario to view details", [s['name'] for s in st.session_state.scenarios])
+            idx = [s['name'] for s in st.session_state.scenarios].index(selected_scenario_for_table)
+            if st.session_state.results[idx] and st.session_state.results[idx].get('data'):
+                df = pd.DataFrame(st.session_state.results[idx]['data'])
+                df['balance'] = df['balance'].apply(format_currency)
+                st.dataframe(df.set_index('year'), use_container_width=True)
 
 else:
     st.info("Adjust settings in the expander above and click 'Run & Compare All Scenarios'.")
