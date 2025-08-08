@@ -95,7 +95,6 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
 
 # --- Core Retirement Simulation Engine ---
 def run_simulation(scenario, exchange_rate):
-    # Pre-retirement growth
     investment = float(scenario['initialInvestment'])
     years_to_grow = scenario['startYear'] - TODAY_YEAR
     if years_to_grow > 0:
@@ -112,20 +111,17 @@ def run_simulation(scenario, exchange_rate):
         age = year - scenario['birthYear']
         yearly_data.append({'year': year, 'age': age, 'balance': round(balance)})
 
-        # Apply start-of-year market crashes
         for crash in scenario.get('marketCrashes', []):
             duration = int(crash.get('duration', 1))
             if duration > 0 and crash.get('timing') == 'start' and year >= int(crash['startYear']) and year < int(crash['startYear']) + duration:
                 decline_rate = (1 - float(crash['totalDecline']) / 100) ** (1 / duration)
                 investment *= decline_rate
 
-        # Apply one-time events
         for event in scenario.get('oneTimeEvents', []):
             if int(event['year']) == year:
                 amount = float(event['amount'])
                 investment += amount if event['type'] == 'Income' else -amount
 
-        # Calculate recurring incomes/expenses
         yearly_income_details = {}
         for income in scenario['incomes']:
             if year >= int(income['startYear']):
@@ -144,7 +140,6 @@ def run_simulation(scenario, exchange_rate):
         if investment > 0:
             investment *= (1 + float(scenario['investmentReturn']) / 100)
 
-        # Apply end-of-year market crashes
         for crash in scenario.get('marketCrashes', []):
             duration = int(crash.get('duration', 1))
             if duration > 0 and crash.get('timing') == 'end' and year >= int(crash['startYear']) and year < int(crash['startYear']) + duration:
@@ -163,17 +158,17 @@ def create_dynamic_list_ui(list_name, fields, title, key_suffix):
         cols = st.columns([f['width'] for f in fields] + [1])
         for j, field in enumerate(fields):
             if field['type'] == 'text':
-                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
             elif field['type'] == 'number':
-                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
             elif field['type'] == 'select':
-                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
         
         if cols[-1].button("🗑️", key=f"{list_name}_del_{i}_{key_suffix}", help=f"Remove this item"):
             active_scenario[list_name].pop(i)
             st.rerun()
 
-    if st.button(f"Add {title.replace('Recurring ','').replace('s','')}", key=f"add_{list_name}_{key_suffix}"):
+    if st.button(f"Add {title.replace('Recurring ','').replace('s','')}", key=f"add_{list_name}_{key_suffix}", use_container_width=True):
         new_item = {f['key']: f['default'] for f in fields}
         active_scenario[list_name].append(new_item)
         st.rerun()
@@ -185,13 +180,7 @@ st.markdown("An advanced simulator combining long-term retirement planning with 
 
 # --- Initialize Session State ---
 if 'scenarios' not in st.session_state:
-    st.session_state.scenarios = [{
-        'name': 'My Retirement Plan', 'initialInvestment': 500000, 'investmentReturn': 6, 
-        'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered',
-        'incomes': [{'name': 'CPP/OAS', 'amount': 15000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5, 'type': 'cpp_oas'}],
-        'expenses': [{'name': 'Base Expenses', 'amount': 60000, 'growthRate': 3.0}],
-        'oneTimeEvents': [], 'marketCrashes': []
-    }]
+    st.session_state.scenarios = [{'name': 'My Retirement Plan', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [{'name': 'CPP/OAS', 'amount': 15000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5, 'type': 'cpp_oas'}], 'expenses': [{'name': 'Base Expenses', 'amount': 60000, 'growthRate': 3.0}], 'oneTimeEvents': [], 'marketCrashes': []}]
 if 'active_scenario_index' not in st.session_state:
     st.session_state.active_scenario_index = 0
 if 'results' not in st.session_state:
@@ -199,60 +188,65 @@ if 'results' not in st.session_state:
 
 # --- UI LAYOUT RESTRUCTURED ---
 with st.expander("⚙️ Settings & Inputs", expanded=True):
-    st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
-    sc_cols = st.columns([2,1,1,1])
-    scenario_names = [s['name'] for s in st.session_state.scenarios]
-    st.session_state.active_scenario_index = scenario_names.index(sc_cols[0].selectbox("Active Scenario", scenario_names, index=st.session_state.active_scenario_index, key=f"selector_{st.session_state.active_scenario_index}"))
-    
-    if sc_cols[1].button("Add New", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3):
-        new_scenario = {'name': f'Scenario {len(st.session_state.scenarios) + 1}', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [], 'expenses': [], 'oneTimeEvents': [], 'marketCrashes': []}
-        st.session_state.scenarios.append(new_scenario)
-        st.session_state.active_scenario_index = len(st.session_state.scenarios) - 1
-        st.rerun()
+    # Create two main columns for the entire input section
+    left_col, right_col = st.columns(2)
 
-    if sc_cols[2].button("Copy", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3):
-        scenario_to_copy = copy.deepcopy(st.session_state.scenarios[st.session_state.active_scenario_index])
-        scenario_to_copy['name'] = f"{scenario_to_copy['name']} (Copy)"
-        st.session_state.scenarios.append(scenario_to_copy)
-        st.session_state.active_scenario_index = len(st.session_state.scenarios) - 1
-        st.rerun()
+    with left_col:
+        st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
+        sc_cols = st.columns([2,1,1,1])
+        scenario_names = [s['name'] for s in st.session_state.scenarios]
+        st.session_state.active_scenario_index = scenario_names.index(sc_cols[0].selectbox("Active Scenario", scenario_names, index=st.session_state.active_scenario_index, key=f"selector_{st.session_state.active_scenario_index}"))
+        
+        if sc_cols[1].button("Add New", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3):
+            new_scenario = {'name': f'Scenario {len(st.session_state.scenarios) + 1}', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [], 'expenses': [], 'oneTimeEvents': [], 'marketCrashes': []}
+            st.session_state.scenarios.append(new_scenario)
+            st.session_state.active_scenario_index = len(st.session_state.scenarios) - 1
+            st.rerun()
 
-    if sc_cols[3].button("Delete", use_container_width=True, disabled=len(st.session_state.scenarios) <= 1):
-        st.session_state.scenarios.pop(st.session_state.active_scenario_index)
-        st.session_state.active_scenario_index = 0
-        st.rerun()
-    st.markdown("---")
-    
-    active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
-    key_suffix = st.session_state.active_scenario_index
+        if sc_cols[2].button("Copy", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3):
+            scenario_to_copy = copy.deepcopy(st.session_state.scenarios[st.session_state.active_scenario_index])
+            scenario_to_copy['name'] = f"{scenario_to_copy['name']} (Copy)"
+            st.session_state.scenarios.append(scenario_to_copy)
+            st.session_state.active_scenario_index = len(st.session_state.scenarios) - 1
+            st.rerun()
 
-    st.markdown("<h5>General Settings</h5>", unsafe_allow_html=True)
-    active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'], key=f"name_{key_suffix}")
-    cols = st.columns(5)
-    active_scenario['initialInvestment'] = cols[0].number_input("Initial Investments ($)", value=active_scenario['initialInvestment'], format="%d", key=f"inv_{key_suffix}")
-    active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'], key=f"ret_{key_suffix}")
-    active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d", key=f"birth_{key_suffix}")
-    active_scenario['startYear'] = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d", key=f"start_{key_suffix}")
-    active_scenario['endYear'] = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d", key=f"end_{key_suffix}")
-    
-    st.markdown("<h5>Tax Settings</h5>", unsafe_allow_html=True)
-    active_scenario['us_dividend_account'] = st.selectbox(
-        "US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"),
-        index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account']), key=f"usd_acct_{key_suffix}"
-    )
+        if sc_cols[3].button("Delete", use_container_width=True, disabled=len(st.session_state.scenarios) <= 1):
+            st.session_state.scenarios.pop(st.session_state.active_scenario_index)
+            st.session_state.active_scenario_index = 0
+            st.rerun()
+        
+        active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
+        key_suffix = st.session_state.active_scenario_index
+
+        st.markdown("<h5>General Settings</h5>", unsafe_allow_html=True)
+        active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'], key=f"name_{key_suffix}")
+        cols = st.columns(5)
+        active_scenario['initialInvestment'] = cols[0].number_input("Initial Inv. ($)", value=active_scenario['initialInvestment'], format="%d", key=f"inv_{key_suffix}")
+        active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'], key=f"ret_{key_suffix}")
+        active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d", key=f"birth_{key_suffix}")
+        active_scenario['startYear'] = cols[3].number_input("Start Year", value=active_scenario['startYear'], format="%d", key=f"start_{key_suffix}")
+        active_scenario['endYear'] = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d", key=f"end_{key_suffix}")
+        
+        st.markdown("<h5>Tax Settings</h5>", unsafe_allow_html=True)
+        active_scenario['us_dividend_account'] = st.selectbox(
+            "US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"),
+            index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account']), key=f"usd_acct_{key_suffix}"
+        )
+
+    with right_col:
+        create_dynamic_list_ui('incomes', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'New Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', key_suffix)
+        st.markdown("<br>", unsafe_allow_html=True)
+        create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', key_suffix)
+
     st.markdown("<hr>", unsafe_allow_html=True)
-
-    income_expense_cols = st.columns(2)
-    with income_expense_cols[0]:
-        create_dynamic_list_ui('incomes', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'New Income', 'width': 3}, {'key': 'amount', 'label': "Amount (Today's $)", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start Year', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth (%)', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', key_suffix)
-    with income_expense_cols[1]:
-        create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount (Today's $)", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth (%)', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', key_suffix)
-
-    with st.expander("One-Time Events (Inheritance, Car Purchase, etc.)"):
-        create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', key_suffix)
-
-    with st.expander("Market Volatility (Crashes)"):
-        create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start Year', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration (Yrs)', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Total Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Crashes', key_suffix)
+    
+    event_cols = st.columns(2)
+    with event_cols[0]:
+        with st.container(border=True):
+            create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', key_suffix)
+    with event_cols[1]:
+        with st.container(border=True):
+            create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', key_suffix)
 
 # --- Simulation Runner ---
 if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_width=True):
@@ -265,7 +259,7 @@ st.header("📊 Simulation Results")
 if st.session_state.results:
     fig = go.Figure()
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
-    symbols = ['circle', 'square', 'diamond'] # Marker symbols for accessibility
+    symbols = ['circle', 'square', 'diamond']
     summary_data = []
 
     for i, result in enumerate(st.session_state.results):
@@ -278,24 +272,21 @@ if st.session_state.results:
             fig.add_trace(go.Scatter(
                 x=years, y=balances, mode='lines+markers', name=scenario['name'],
                 line=dict(color=colors[i % len(colors)], width=3),
-                marker=dict(size=7, symbol=symbols[i % len(symbols)]), # Different symbol per scenario
+                marker=dict(size=7, symbol=symbols[i % len(symbols)]),
                 hovertext=[f"Age: {age}" for age in ages],
                 hovertemplate='<b>%{data.name}</b><br><b>Year:</b> %{x}<br><b>Balance:</b> %{y:$,.0f}<br><b>%{hovertext}</b><extra></extra>'
             ))
             
             final_balance = balances[-1] if balances else 0
             depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
-            summary_data.append({
-                "Scenario": scenario['name'], "Final Balance": format_currency(final_balance),
-                "Funds Depleted In": depletion_text
-            })
+            summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
 
     fig.update_layout(
         title="Retirement Portfolio Projection",
         xaxis_title="Year", yaxis_title="Portfolio Balance",
         yaxis_tickprefix="$", yaxis_tickformat="~s",
         legend_title="Scenarios", template="plotly_dark", height=500,
-        hovermode='x unified' # Vertical line hover
+        hovermode='x unified'
     )
     st.plotly_chart(fig, use_container_width=True)
 
