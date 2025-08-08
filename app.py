@@ -179,8 +179,10 @@ def create_dynamic_list_ui(list_name, fields, title, default_item):
 
 # --- Main App ---
 st.set_page_config(layout="wide")
-# CSS to hide number input steppers. Using !important to ensure it overrides default styles.
-st.markdown("""<style>
+# CSS to hide number input steppers and adjust button layout on mobile
+st.markdown("""
+<style>
+    /* Hide number input steppers */
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button {
         -webkit-appearance: none !important;
@@ -189,7 +191,17 @@ st.markdown("""<style>
     input[type=number] {
         -moz-appearance: textfield !important;
     }
-</style>""", unsafe_allow_html=True)
+
+    /* Force scenario manager buttons to be in a row on mobile */
+    @media (max-width: 640px) {
+        div[data-testid="stExpander"] div[data-testid="stHorizontalBlock"] {
+            flex-direction: row !important;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("📈 Integrated Retirement & Tax Planner")
 st.markdown("An advanced simulator combining long-term retirement planning with detailed annual tax calculations.")
@@ -220,9 +232,9 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     st.selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
     
     sc_cols = st.columns(3)
-    sc_cols[0].button("➕", use_container_width=True, help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
-    sc_cols[1].button("📋", use_container_width=True, help="Copy the current scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
-    sc_cols[2].button("🗑️", use_container_width=True, help="Delete the current scenario", disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
+    sc_cols[0].button("➕", help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
+    sc_cols[1].button("📋", help="Copy the current scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
+    sc_cols[2].button("🗑️", help="Delete the current scenario", disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
     
     st.markdown("---")
     
