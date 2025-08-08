@@ -82,7 +82,7 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
     federal_tax -= grossed_up_dividends * FED_ELIGIBLE_DIVIDEND_CREDIT_RATE
     provincial_tax -= grossed_up_dividends * ON_ELIGIBLE_DIVIDEND_CREDIT_RATE
 
-    if us_dividend_account == 'Non-Registered':
+    if us_dividend_account == 'Non-Registered' and total_taxable_income > 0:
         canadian_tax_on_us_income = taxable_us_dividends * (federal_tax_before_credits / total_taxable_income)
         federal_tax -= min(us_withholding_tax, canadian_tax_on_us_income)
 
@@ -181,7 +181,6 @@ def create_dynamic_list_ui(list_name, fields, title, default_item):
 st.set_page_config(layout="wide")
 # CSS to hide number input steppers
 st.markdown("""<style>
-    /* Hide the up and down arrows on number inputs */
     input[type=number]::-webkit-inner-spin-button, 
     input[type=number]::-webkit-outer-spin-button { 
         -webkit-appearance: none; 
@@ -259,7 +258,6 @@ if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_w
 # --- Results Display ---
 st.header("📊 Simulation Results")
 if st.session_state.results:
-    # Check for errors from validation
     has_errors = any(res.get('errors') for res in st.session_state.results)
     if has_errors:
         for i, result in enumerate(st.session_state.results):
