@@ -161,11 +161,11 @@ def income_input_ui(key_suffix):
         income['growthRate'] = cols[3].number_input("Growth (%)", value=income['growthRate'], key=f"in_growth_{i}_{key_suffix}")
         if cols[4].button("🗑️", key=f"in_del_{i}_{key_suffix}"):
             st.session_state.incomes.pop(i)
-            st.experimental_rerun()
+            st.rerun() # BUG FIX: Replaced st.experimental_rerun()
 
     if st.button("Add Income", key=f"add_income_{key_suffix}"):
         st.session_state.incomes.append({'name': 'New Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5})
-        st.experimental_rerun()
+        st.rerun() # BUG FIX: Replaced st.experimental_rerun()
 
 def expense_input_ui(key_suffix):
     st.markdown("##### Recurring Expenses")
@@ -179,15 +179,15 @@ def expense_input_ui(key_suffix):
         exp['growthRate'] = cols[2].number_input("Growth (%)", value=exp['growthRate'], key=f"ex_growth_{i}_{key_suffix}")
         if cols[3].button("🗑️", key=f"ex_del_{i}_{key_suffix}"):
             st.session_state.expenses.pop(i)
-            st.experimental_rerun()
+            st.rerun() # BUG FIX: Replaced st.experimental_rerun()
 
     if st.button("Add Expense", key=f"add_expense_{key_suffix}"):
         st.session_state.expenses.append({'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3})
-        st.experimental_rerun()
+        st.rerun() # BUG FIX: Replaced st.experimental_rerun()
 
 # --- Main App Layout ---
 st.set_page_config(layout="wide")
-st.title(" 통합 은퇴 및 세후 소득 계산기")
+st.title("통합 은퇴 및 세후 소득 계산기")
 st.markdown("장기 은퇴 계획과 연간 세금 계산을 결합하여 정확한 자산 변화를 시뮬레이션합니다.")
 
 # Initialize session state
@@ -275,4 +275,3 @@ if st.sidebar.button("Run Simulation", type="primary"):
 
 else:
     st.info("입력값을 조정한 후 'Run Simulation' 버튼을 눌러주세요.")
-
