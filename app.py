@@ -179,15 +179,15 @@ def create_dynamic_list_ui(list_name, fields, title, default_item):
 
 # --- Main App ---
 st.set_page_config(layout="wide")
-# CSS to hide number input steppers
+# CSS to hide number input steppers. Using !important to ensure it overrides default styles.
 st.markdown("""<style>
-    input[type=number]::-webkit-inner-spin-button, 
-    input[type=number]::-webkit-outer-spin-button { 
-        -webkit-appearance: none; 
-        margin: 0; 
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button {
+        -webkit-appearance: none !important;
+        margin: 0 !important;
     }
     input[type=number] {
-        -moz-appearance: textfield;
+        -moz-appearance: textfield !important;
     }
 </style>""", unsafe_allow_html=True)
 
