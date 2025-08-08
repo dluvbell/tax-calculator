@@ -195,9 +195,14 @@ if 'results' not in st.session_state:
 with st.expander("⚙️ Settings & Inputs", expanded=True):
     # --- Top Section: Scenario Manager ---
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
-    sc_cols = st.columns([2,1,1,1])
+    
+    def update_active_index():
+        st.session_state.active_scenario_index = st.session_state.scenario_selector
+
     scenario_names = [s['name'] for s in st.session_state.scenarios]
-    st.session_state.active_scenario_index = scenario_names.index(sc_cols[0].selectbox("Active Scenario", scenario_names, index=st.session_state.active_scenario_index, key=f"selector_{st.session_state.active_scenario_index}"))
+    
+    sc_cols = st.columns([2,1,1,1])
+    sc_cols[0].selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
     
     if sc_cols[1].button("Add New", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3):
         new_scenario = {'name': f'Scenario {len(st.session_state.scenarios) + 1}', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [], 'expenses': [], 'oneTimeEvents': [], 'marketCrashes': []}
@@ -219,12 +224,12 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     
     st.markdown("---")
     
-    # --- Dropdown for Editing Sections ---
-    edit_section = st.selectbox("Edit Section", ["General & Tax Settings", "Recurring Incomes & Expenses", "Events & Volatility"])
-    
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
     key_suffix = st.session_state.active_scenario_index
 
+    # --- Dropdown for Editing Sections ---
+    edit_section = st.selectbox("Edit Section", ["General & Tax Settings", "Recurring Incomes & Expenses", "Events & Volatility"])
+    
     if edit_section == "General & Tax Settings":
         st.markdown("<h5>General Settings</h5>", unsafe_allow_html=True)
         active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'], key=f"name_{key_suffix}")
