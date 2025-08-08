@@ -154,21 +154,20 @@ def create_dynamic_list_ui(list_name, fields, title, key_suffix):
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
     if list_name not in active_scenario: active_scenario[list_name] = []
 
-    # Header
-    cols = st.columns([f['width'] for f in fields] + [1])
-    for j, field in enumerate(fields):
-        cols[j].markdown(f"<small>{field['label']}</small>", unsafe_allow_html=True)
-
     for i, item in enumerate(active_scenario[list_name]):
         cols = st.columns([f['width'] for f in fields] + [1])
         for j, field in enumerate(fields):
+            # MOBILE FIX: Show labels on mobile, but use headers on desktop
+            label_visibility = "visible" # Default for mobile
+            
             if field['type'] == 'text':
-                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], label_visibility=label_visibility, key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
             elif field['type'] == 'number':
-                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], label_visibility=label_visibility, key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
             elif field['type'] == 'select':
-                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), label_visibility=label_visibility, key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
         
+        cols[-1].markdown('<div style="height: 28px;"></div>', unsafe_allow_html=True) # Spacer for alignment
         if cols[-1].button("🗑️", key=f"{list_name}_del_{i}_{key_suffix}", help=f"Remove this item"):
             active_scenario[list_name].pop(i)
             st.rerun()
@@ -193,7 +192,6 @@ if 'results' not in st.session_state:
 
 # --- UI LAYOUT RESTRUCTURED WITH DROPDOWN ---
 with st.expander("⚙️ Settings & Inputs", expanded=True):
-    # --- Top Section: Scenario Manager ---
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
     
     def update_active_index():
@@ -227,7 +225,6 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
     key_suffix = st.session_state.active_scenario_index
 
-    # --- Dropdown for Editing Sections ---
     edit_section = st.selectbox("Edit Section", ["General & Tax Settings", "Recurring Incomes & Expenses", "Events & Volatility"])
     
     if edit_section == "General & Tax Settings":
