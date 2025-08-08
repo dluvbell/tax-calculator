@@ -148,34 +148,37 @@ def run_simulation(scenario, exchange_rate):
             
     return {'data': yearly_data, 'depletion_year': depletion_year}
 
-# --- UI Components ---
-def create_dynamic_list_ui(list_name, fields, title, key_suffix):
+# --- UI Components & Callbacks for Performance ---
+def add_item(list_name, default_item):
+    st.session_state.scenarios[st.session_state.active_scenario_index][list_name].append(default_item)
+
+def delete_item(list_name, index):
+    st.session_state.scenarios[st.session_state.active_scenario_index][list_name].pop(index)
+
+def create_dynamic_list_ui(list_name, fields, title, default_item):
     st.markdown(f"<h5>{title}</h5>", unsafe_allow_html=True)
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
     if list_name not in active_scenario: active_scenario[list_name] = []
 
+    # Header
+    cols = st.columns([f['width'] for f in fields] + [1])
+    for j, field in enumerate(fields):
+        cols[j].markdown(f"<small>{field['label']}</small>", unsafe_allow_html=True)
+
     for i, item in enumerate(active_scenario[list_name]):
         cols = st.columns([f['width'] for f in fields] + [1])
         for j, field in enumerate(fields):
-            # MOBILE FIX: Show labels on mobile, but use headers on desktop
-            label_visibility = "visible" # Default for mobile
-            
             if field['type'] == 'text':
-                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], label_visibility=label_visibility, key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}")
             elif field['type'] == 'number':
-                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], label_visibility=label_visibility, key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}")
             elif field['type'] == 'select':
-                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), label_visibility=label_visibility, key=f"{list_name}_{i}_{field['key']}_{key_suffix}")
+                item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), label_visibility="collapsed", key=f"{list_name}_{i}_{field['key']}")
         
-        cols[-1].markdown('<div style="height: 28px;"></div>', unsafe_allow_html=True) # Spacer for alignment
-        if cols[-1].button("🗑️", key=f"{list_name}_del_{i}_{key_suffix}", help=f"Remove this item"):
-            active_scenario[list_name].pop(i)
-            st.rerun()
+        cols[-1].markdown('<div style="height: 28px;"></div>', unsafe_allow_html=True)
+        cols[-1].button("🗑️", key=f"{list_name}_del_{i}", help=f"Remove this item", on_click=delete_item, args=(list_name, i))
 
-    if st.button(f"Add {title.replace('Recurring ','').replace('s','')}", key=f"add_{list_name}_{key_suffix}", use_container_width=True):
-        new_item = {f['key']: f['default'] for f in fields}
-        active_scenario[list_name].append(new_item)
-        st.rerun()
+    st.button(f"Add {title.replace('Recurring ','').replace('s','')}", key=f"add_{list_name}", use_container_width=True, on_click=add_item, args=(list_name, default_item))
 
 # --- Main App Layout ---
 st.set_page_config(layout="wide")
@@ -192,70 +195,70 @@ if 'results' not in st.session_state:
 
 # --- UI LAYOUT RESTRUCTURED WITH DROPDOWN ---
 with st.expander("⚙️ Settings & Inputs", expanded=True):
+    # --- Top Section: Scenario Manager ---
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
     
     def update_active_index():
         st.session_state.active_scenario_index = st.session_state.scenario_selector
 
-    scenario_names = [s['name'] for s in st.session_state.scenarios]
-    
-    sc_cols = st.columns([2,1,1,1])
-    sc_cols[0].selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
-    
-    if sc_cols[1].button("Add New", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3):
+    def add_scenario_cb():
         new_scenario = {'name': f'Scenario {len(st.session_state.scenarios) + 1}', 'initialInvestment': 500000, 'investmentReturn': 6, 'birthYear': 1980, 'startYear': TODAY_YEAR + 20, 'endYear': TODAY_YEAR + 50, 'us_dividend_account': 'Non-Registered', 'incomes': [], 'expenses': [], 'oneTimeEvents': [], 'marketCrashes': []}
         st.session_state.scenarios.append(new_scenario)
         st.session_state.active_scenario_index = len(st.session_state.scenarios) - 1
-        st.rerun()
 
-    if sc_cols[2].button("Copy", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3):
+    def copy_scenario_cb():
         scenario_to_copy = copy.deepcopy(st.session_state.scenarios[st.session_state.active_scenario_index])
         scenario_to_copy['name'] = f"{scenario_to_copy['name']} (Copy)"
         st.session_state.scenarios.append(scenario_to_copy)
         st.session_state.active_scenario_index = len(st.session_state.scenarios) - 1
-        st.rerun()
 
-    if sc_cols[3].button("Delete", use_container_width=True, disabled=len(st.session_state.scenarios) <= 1):
+    def delete_scenario_cb():
         st.session_state.scenarios.pop(st.session_state.active_scenario_index)
         st.session_state.active_scenario_index = 0
-        st.rerun()
+
+    scenario_names = [s['name'] for s in st.session_state.scenarios]
+    
+    sc_cols = st.columns([2,1,1,1])
+    with sc_cols[0]:
+        st.selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index, label_visibility="collapsed")
+    sc_cols[1].button("Add New", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3, on_click=add_scenario_cb)
+    sc_cols[2].button("Copy", use_container_width=True, disabled=len(st.session_state.scenarios) >= 3, on_click=copy_scenario_cb)
+    sc_cols[3].button("Delete", use_container_width=True, disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
     
     st.markdown("---")
     
     active_scenario = st.session_state.scenarios[st.session_state.active_scenario_index]
-    key_suffix = st.session_state.active_scenario_index
 
     edit_section = st.selectbox("Edit Section", ["General & Tax Settings", "Recurring Incomes & Expenses", "Events & Volatility"])
     
     if edit_section == "General & Tax Settings":
-        st.markdown("<h5>General Settings</h5>", unsafe_allow_html=True)
-        active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'], key=f"name_{key_suffix}")
+        active_scenario['name'] = st.text_input("Scenario Name", value=active_scenario['name'])
         cols = st.columns(5)
-        active_scenario['initialInvestment'] = cols[0].number_input("Initial Inv. ($)", value=active_scenario['initialInvestment'], format="%d", key=f"inv_{key_suffix}")
-        active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'], key=f"ret_{key_suffix}")
-        active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d", key=f"birth_{key_suffix}")
-        active_scenario['startYear'] = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d", key=f"start_{key_suffix}")
-        active_scenario['endYear'] = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d", key=f"end_{key_suffix}")
+        active_scenario['initialInvestment'] = cols[0].number_input("Initial Inv. ($)", value=active_scenario['initialInvestment'], format="%d")
+        active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'])
+        active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d")
+        active_scenario['startYear'] = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d")
+        active_scenario['endYear'] = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d")
         
-        st.markdown("<h5>Tax Settings</h5>", unsafe_allow_html=True)
+        st.markdown("<h6>Tax Settings</h6>", unsafe_allow_html=True)
         active_scenario['us_dividend_account'] = st.selectbox(
             "US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"),
-            index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account']), key=f"usd_acct_{key_suffix}"
+            index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account'])
         )
 
     elif edit_section == "Recurring Incomes & Expenses":
         income_expense_cols = st.columns(2)
         with income_expense_cols[0]:
-            create_dynamic_list_ui('incomes', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'New Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', key_suffix)
+            create_dynamic_list_ui('incomes', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'New Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', {'name': 'New Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5, 'type': 'other_income'})
         with income_expense_cols[1]:
-            create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', key_suffix)
+            create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', {'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3})
 
     elif edit_section == "Events & Volatility":
         event_cols = st.columns(2)
         with event_cols[0]:
-            create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', key_suffix)
+            create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', {'name': 'New Event', 'type': 'Expense', 'amount': 20000, 'year': TODAY_YEAR + 15})
         with event_cols[1]:
-            create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', key_suffix)
+            create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', {'startYear': TODAY_YEAR + 10, 'duration': 2, 'totalDecline': 30, 'timing': 'start'})
 
 # --- Simulation Runner ---
 if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_width=True):
