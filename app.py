@@ -90,7 +90,6 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
     federal_tax, provincial_tax = max(0, federal_tax), max(0, provincial_tax)
 
     net_income_for_clawback = total_taxable_income - (grossed_up_dividends - eligible_dividends_actual)
-    # OAS Clawback 계산 로직 수정: 'oas' 키를 직접 사용하여 정확한 OAS 수입을 가져옴
     oas_income = yearly_income_details.get('oas', 0) 
     oas_clawback = 0
     if net_income_for_clawback > OAS_CLAWBACK_THRESHOLD_2025:
@@ -102,7 +101,6 @@ def calculate_after_tax_income(yearly_income_details, us_dividend_account):
 
 # --- Core Retirement Simulation Engine ---
 def run_simulation(scenario, exchange_rate):
-    # Data Validation
     errors = []
     if scenario['startYear'] > scenario['endYear']:
         errors.append("Retirement Start Year cannot be after End Year.")
@@ -181,7 +179,7 @@ def create_dynamic_list_ui(list_name, fields, title, default_item):
 
 # --- Main App ---
 st.set_page_config(layout="wide")
-# CSS to hide number input steppers and adjust button layout on mobile
+# CSS to hide number input steppers and adjust button layout
 st.markdown("""
 <style>
     /* Hide number input steppers */
@@ -194,14 +192,11 @@ st.markdown("""
         -moz-appearance: textfield !important;
     }
 
-    /* Force scenario manager buttons to be in a row on mobile */
-    @media (max-width: 640px) {
-        /* This selector targets the specific horizontal block containing the scenario buttons */
-        div[data-testid="stExpander"] div[data-testid="stVerticalBlock"] > div:nth-of-type(2) > div[data-testid="stHorizontalBlock"] {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 0.5rem;
-        }
+    /* Target the container for the scenario management buttons */
+    div[data-testid="stHorizontalBlock"] > div:nth-child(2) > div[data-testid="stHorizontalBlock"] {
+        display: flex;
+        justify-content: flex-start;
+        gap: 0.2rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -219,7 +214,6 @@ if 'scenarios' not in st.session_state:
         'endYear': TODAY_YEAR + 50, 
         'us_dividend_account': 'Non-Registered', 
         'incomes': [
-            # 기본 소득 항목을 CPP와 OAS로 분리
             {'type': 'OAS', 'amount': 8000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5},
             {'type': 'CPP', 'amount': 9000, 'startYear': TODAY_YEAR + 25, 'growthRate': 2.5}
         ], 
@@ -247,14 +241,29 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
         st.session_state.active_scenario_index = 0
 
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
-    scenario_names = [s['name'] for s in st.session_state.scenarios]
-    st.selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
     
-    sc_cols = st.columns(3)
-    # 버튼에서 use_container_width 제거하여 아이콘 크기에 맞게 조절
-    sc_cols[0].button("➕", help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
-    sc_cols[1].button("📋", help="Copy the current scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
-    sc_cols[2].button("🗑️", help="Delete the current scenario", disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
+    # --- Responsive Layout for Scenario Controls ---
+    # Create two main columns. The ratio determines the width on large screens.
+    left_col, right_col = st.columns([2, 1])
+
+    with left_col:
+        scenario_names = [s['name'] for s in st.session_state.scenarios]
+        st.selectbox(
+            "Active Scenario", 
+            options=range(len(scenario_names)), 
+            format_func=lambda x: scenario_names[x], 
+            index=st.session_state.active_scenario_index, 
+            key="scenario_selector", 
+            on_change=update_active_index,
+            label_visibility="collapsed" # Hide label to save space
+        )
+
+    with right_col:
+        # Create three nested columns for the buttons
+        b1, b2, b3 = st.columns(3)
+        b1.button("➕", help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb, use_container_width=True)
+        b2.button("📋", help="Copy the current scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb, use_container_width=True)
+        b3.button("🗑️", help="Delete the current scenario", disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb, use_container_width=True)
     
     st.markdown("---")
     
