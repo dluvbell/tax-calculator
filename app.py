@@ -268,7 +268,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Title changed and resized
 st.header("Retirement Planner")
 st.markdown("An advanced simulator combining long-term retirement planning with detailed annual tax calculations.")
 
@@ -369,7 +368,6 @@ if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_w
     st.session_state.mc_results = None 
 
 # --- Results Display ---
-# Title resized
 st.subheader("📊 Simulation Results")
 if st.session_state.results:
     if len(st.session_state.results) > len(st.session_state.scenarios):
@@ -383,6 +381,14 @@ if st.session_state.results:
                 for error in result['errors']:
                     st.warning(f"- {error}")
     else:
+        # Add a slider to control a vertical line on the graph
+        first_result_data = next((res['data'] for res in st.session_state.results if res and res.get('data')), None)
+        if first_result_data:
+            years_list = [d['year'] for d in first_result_data]
+            selected_year = st.slider("Inspect Year", min_value=years_list[0], max_value=years_list[-1], value=years_list[0])
+        else:
+            selected_year = None
+
         fig = go.Figure()
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         symbols = ['circle', 'square', 'diamond', 'cross', 'x']
@@ -401,6 +407,9 @@ if st.session_state.results:
                     final_balance = balances[-1] if balances else 0
                     depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
                     summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
+        
+        if selected_year:
+            fig.add_vline(x=selected_year, line_width=1, line_dash="dash", line_color="white")
 
         fig.update_layout(title="Retirement Portfolio Projection", xaxis_title="Year", yaxis_title="Portfolio Balance", yaxis_tickprefix="$", yaxis_tickformat="~s", legend_title="Scenarios", template="plotly_dark", height=500, hovermode='x unified', xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
         st.plotly_chart(fig, use_container_width=True)
