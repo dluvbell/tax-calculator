@@ -37,6 +37,19 @@ def format_currency(amount):
     return f"${amount:,.0f}"
 
 # --- Core Tax Calculation Logic ---
+# NameError 수정을 위해 삭제되었던 함수 복원
+def calculate_progressive_tax(income, brackets):
+    tax = 0
+    previous_bracket_limit = 0
+    for limit, rate in brackets.items():
+        if income > limit:
+            tax += (limit - previous_bracket_limit) * rate
+            previous_bracket_limit = limit
+        else:
+            tax += (income - previous_bracket_limit) * rate
+            break
+    return tax
+
 def calculate_after_tax_income(yearly_income_details, us_dividend_account):
     gross_income = sum(yearly_income_details.values())
     if gross_income == 0:
@@ -327,7 +340,6 @@ if st.session_state.results:
                 depletion_text = f"{result['depletion_year']} (Age: {result['depletion_year'] - scenario['birthYear']})" if result['depletion_year'] else "Sustained"
                 summary_data.append({"Scenario": scenario['name'], "Final Balance": format_currency(final_balance), "Funds Depleted In": depletion_text})
 
-        # 그래프 레이아웃 업데이트: 줌 기능 비활성화 및 hover 모드 변경
         fig.update_layout(
             title="Retirement Portfolio Projection", 
             xaxis_title="Year", 
