@@ -201,7 +201,6 @@ if 'results' not in st.session_state:
 with st.expander("⚙️ Settings & Inputs", expanded=True):
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
     sc_cols = st.columns([2,1,1,1])
-    # ... (Scenario manager UI remains the same)
     scenario_names = [s['name'] for s in st.session_state.scenarios]
     st.session_state.active_scenario_index = scenario_names.index(sc_cols[0].selectbox("Active Scenario", scenario_names, index=st.session_state.active_scenario_index, key=f"selector_{st.session_state.active_scenario_index}"))
     
@@ -266,6 +265,7 @@ st.header("📊 Simulation Results")
 if st.session_state.results:
     fig = go.Figure()
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
+    symbols = ['circle', 'square', 'diamond'] # Marker symbols for accessibility
     summary_data = []
 
     for i, result in enumerate(st.session_state.results):
@@ -277,7 +277,8 @@ if st.session_state.results:
             
             fig.add_trace(go.Scatter(
                 x=years, y=balances, mode='lines+markers', name=scenario['name'],
-                line=dict(color=colors[i % len(colors)], width=3), marker=dict(size=5),
+                line=dict(color=colors[i % len(colors)], width=3),
+                marker=dict(size=7, symbol=symbols[i % len(symbols)]), # Different symbol per scenario
                 hovertext=[f"Age: {age}" for age in ages],
                 hovertemplate='<b>%{data.name}</b><br><b>Year:</b> %{x}<br><b>Balance:</b> %{y:$,.0f}<br><b>%{hovertext}</b><extra></extra>'
             ))
@@ -294,7 +295,7 @@ if st.session_state.results:
         xaxis_title="Year", yaxis_title="Portfolio Balance",
         yaxis_tickprefix="$", yaxis_tickformat="~s",
         legend_title="Scenarios", template="plotly_dark", height=500,
-        hovermode='x unified'
+        hovermode='x unified' # Vertical line hover
     )
     st.plotly_chart(fig, use_container_width=True)
 
