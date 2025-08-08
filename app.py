@@ -174,7 +174,8 @@ def add_item(list_name, default_item):
 def delete_item(list_name, index):
     st.session_state.scenarios[st.session_state.active_scenario_index][list_name].pop(index)
 
-def create_dynamic_list_ui(list_name, fields, title, default_item, scenario_index):
+# 나이 표시 기능을 위해 birth_year 인자 추가
+def create_dynamic_list_ui(list_name, fields, title, default_item, scenario_index, birth_year):
     st.markdown(f"<h5>{title}</h5>", unsafe_allow_html=True)
     active_scenario = st.session_state.scenarios[scenario_index]
     if list_name not in active_scenario: active_scenario[list_name] = []
@@ -186,7 +187,13 @@ def create_dynamic_list_ui(list_name, fields, title, default_item, scenario_inde
             if field['type'] == 'text': 
                 item[field['key']] = cols[j].text_input(field['label'], value=item[field['key']], key=unique_key)
             elif field['type'] == 'number': 
-                item[field['key']] = cols[j].number_input(field['label'], value=item[field['key']], key=unique_key)
+                # number_input에서 반환된 값을 즉시 사용
+                year_value = cols[j].number_input(field['label'], value=item[field['key']], key=unique_key)
+                item[field['key']] = year_value
+                # 연도 필드 아래에 나이 표시
+                if field['key'] in ['startYear', 'year']:
+                    age = year_value - birth_year
+                    cols[j].caption(f"Age: {age}")
             elif field['type'] == 'select': 
                 item[field['key']] = cols[j].selectbox(field['label'], field['options'], index=field['options'].index(item[field['key']]), key=unique_key)
         
@@ -256,18 +263,11 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
         st.session_state.scenarios.append(scenario_to_copy)
         st.session_state.active_scenario_index = len(st.session_state.scenarios) - 1
     
-    # IndexError 수정을 위해 delete_scenario_cb 함수 수정
     def delete_scenario_cb():
         index_to_delete = st.session_state.active_scenario_index
-        
-        # 시나리오 목록에서 삭제
         st.session_state.scenarios.pop(index_to_delete)
-        
-        # 결과 목록이 존재하고, 삭제할 인덱스가 유효할 경우에만 결과도 함께 삭제
         if st.session_state.results and len(st.session_state.results) > index_to_delete:
             st.session_state.results.pop(index_to_delete)
-        
-        # 활성 인덱스를 0으로 초기화
         st.session_state.active_scenario_index = 0
 
     st.markdown("<h5>Scenario Manager</h5>", unsafe_allow_html=True)
@@ -293,7 +293,6 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     st.markdown("---")
     
     active_scenario_index = st.session_state.active_scenario_index
-    # 시나리오가 모두 삭제되었을 경우를 대비한 방어 코드
     if not st.session_state.scenarios:
         st.warning("All scenarios have been deleted. Please add a new one.")
     else:
@@ -305,20 +304,34 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
             cols = st.columns(5)
             active_scenario['initialInvestment'] = cols[0].number_input("Initial Inv. ($)", value=active_scenario['initialInvestment'], format="%d", key=f"scen_{active_scenario_index}_inv")
             active_scenario['investmentReturn'] = cols[1].number_input("Avg. Return (%)", value=active_scenario['investmentReturn'], key=f"scen_{active_scenario_index}_ret")
-            active_scenario['birthYear'] = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d", key=f"scen_{active_scenario_index}_birth")
-            active_scenario['startYear'] = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d", key=f"scen_{active_scenario_index}_start")
-            active_scenario['endYear'] = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d", key=f"scen_{active_scenario_index}_end")
+            
+            # Birth Year 값 가져오기
+            birth_year_val = cols[2].number_input("Birth Year", value=active_scenario['birthYear'], format="%d", key=f"scen_{active_scenario_index}_birth")
+            active_scenario['birthYear'] = birth_year_val
+
+            # Retirement Start Year와 나이 표시
+            start_year_val = cols[3].number_input("Retirement Start Year", value=active_scenario['startYear'], format="%d", key=f"scen_{active_scenario_index}_start")
+            active_scenario['startYear'] = start_year_val
+            cols[3].caption(f"Age: {start_year_val - birth_year_val}")
+
+            # End Year와 나이 표시
+            end_year_val = cols[4].number_input("End Year", value=active_scenario['endYear'], format="%d", key=f"scen_{active_scenario_index}_end")
+            active_scenario['endYear'] = end_year_val
+            cols[4].caption(f"Age: {end_year_val - birth_year_val}")
+
             st.markdown("<h6>Tax Settings</h6>", unsafe_allow_html=True)
             active_scenario['us_dividend_account'] = st.selectbox("US Dividend Account Type", ("Non-Registered", "RRSP/RRIF", "TFSA"), index=["Non-Registered", "RRSP/RRIF", "TFSA"].index(active_scenario['us_dividend_account']), key=f"scen_{active_scenario_index}_usdiv")
         
+        # create_dynamic_list_ui 호출 시 birth_year 전달
         elif edit_section == "Recurring Incomes":
-            create_dynamic_list_ui('incomes', [{'key': 'type', 'label': 'Type', 'type': 'select', 'options': INCOME_TYPES, 'default': 'Other Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', {'type': 'Other Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5}, active_scenario_index)
+            create_dynamic_list_ui('incomes', [{'key': 'type', 'label': 'Type', 'type': 'select', 'options': INCOME_TYPES, 'default': 'Other Income', 'width': 3}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 10000, 'width': 2}, {'key': 'startYear', 'label': 'Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 2.5, 'width': 2}], 'Recurring Incomes', {'type': 'Other Income', 'amount': 10000, 'startYear': TODAY_YEAR + 10, 'growthRate': 2.5}, active_scenario_index, active_scenario['birthYear'])
         elif edit_section == "Recurring Expenses":
-            create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', {'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3}, active_scenario_index)
+            # 이 섹션에는 연도 입력이 없으므로 birth_year 전달 불필요
+            create_dynamic_list_ui('expenses', [{'key': 'name', 'label': 'Name', 'type': 'text', 'default': 'Living Expenses', 'width': 5}, {'key': 'amount', 'label': "Amount", 'type': 'number', 'default': 50000, 'width': 3}, {'key': 'growthRate', 'label': 'Growth', 'type': 'number', 'default': 3, 'width': 3}], 'Recurring Expenses', {'name': 'Living Expenses', 'amount': 50000, 'growthRate': 3}, active_scenario_index, active_scenario['birthYear'])
         elif edit_section == "One-Time Events":
-            create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', {'name': 'New Event', 'type': 'Expense', 'amount': 20000, 'year': TODAY_YEAR + 15}, active_scenario_index)
+            create_dynamic_list_ui('oneTimeEvents', [{'key': 'name', 'label': 'Event Name', 'type': 'text', 'default': 'New Event', 'width': 4}, {'key': 'type', 'label': 'Type', 'type': 'select', 'options': ['Income', 'Expense'], 'default': 'Expense', 'width': 2}, {'key': 'amount', 'label': 'Amount ($)', 'type': 'number', 'default': 20000, 'width': 2}, {'key': 'year', 'label': 'Year', 'type': 'number', 'default': TODAY_YEAR + 15, 'width': 2}], 'One-Time Events', {'name': 'New Event', 'type': 'Expense', 'amount': 20000, 'year': TODAY_YEAR + 15}, active_scenario_index, active_scenario['birthYear'])
         elif edit_section == "Market Volatility":
-            create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', {'startYear': TODAY_YEAR + 10, 'duration': 2, 'totalDecline': 30, 'timing': 'start'}, active_scenario_index)
+            create_dynamic_list_ui('marketCrashes', [{'key': 'startYear', 'label': 'Crash Start', 'type': 'number', 'default': TODAY_YEAR + 10, 'width': 2}, {'key': 'duration', 'label': 'Duration', 'type': 'number', 'default': 2, 'width': 2}, {'key': 'totalDecline', 'label': 'Decline (%)', 'type': 'number', 'default': 30, 'width': 2}, {'key': 'timing', 'label': 'Timing', 'type': 'select', 'options': ['start', 'end'], 'default': 'start', 'width': 2}], 'Market Volatility', {'startYear': TODAY_YEAR + 10, 'duration': 2, 'totalDecline': 30, 'timing': 'start'}, active_scenario_index, active_scenario['birthYear'])
 
 # --- Simulation Runner ---
 if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_width=True):
@@ -329,7 +342,6 @@ if st.button("🚀 Run & Compare All Scenarios", type="primary", use_container_w
 # --- Results Display ---
 st.header("📊 Simulation Results")
 if st.session_state.results:
-    # 결과 목록의 길이가 시나리오 목록의 길이보다 길 경우, 동기화
     if len(st.session_state.results) > len(st.session_state.scenarios):
         st.session_state.results = st.session_state.results[:len(st.session_state.scenarios)]
 
@@ -347,7 +359,6 @@ if st.session_state.results:
         summary_data = []
 
         for i, result in enumerate(st.session_state.results):
-            # 시나리오가 존재할 경우에만 그래프 및 데이터 처리
             if i < len(st.session_state.scenarios):
                 scenario = st.session_state.scenarios[i]
                 if result and result.get('data'):
