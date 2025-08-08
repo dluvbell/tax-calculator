@@ -220,9 +220,9 @@ with st.expander("⚙️ Settings & Inputs", expanded=True):
     st.selectbox("Active Scenario", options=range(len(scenario_names)), format_func=lambda x: scenario_names[x], index=st.session_state.active_scenario_index, key="scenario_selector", on_change=update_active_index)
     
     sc_cols = st.columns(3)
-    sc_cols[0].button("➕ Add New", use_container_width=True, disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
-    sc_cols[1].button("📄 Copy", use_container_width=True, disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
-    sc_cols[2].button("🗑️ Delete", use_container_width=True, disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
+    sc_cols[0].button("➕", use_container_width=True, help="Add a new scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=add_scenario_cb)
+    sc_cols[1].button("📋", use_container_width=True, help="Copy the current scenario", disabled=len(st.session_state.scenarios) >= 5, on_click=copy_scenario_cb)
+    sc_cols[2].button("🗑️", use_container_width=True, help="Delete the current scenario", disabled=len(st.session_state.scenarios) <= 1, on_click=delete_scenario_cb)
     
     st.markdown("---")
     
