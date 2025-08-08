@@ -1,1 +1,3 @@
-streamlitpandasrequests
+streamlit
+pandas
+requests
